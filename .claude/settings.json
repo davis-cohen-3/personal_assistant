@@ -1,0 +1,21 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'cd \"$(git rev-parse --show-toplevel)\" && python3 .claude/hooks/check_typescript_quality.py'",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash -c 'cd \"$(git rev-parse --show-toplevel)\" && python3 .claude/hooks/check_verbose_comments.py'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
