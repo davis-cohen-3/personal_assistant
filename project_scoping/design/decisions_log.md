@@ -59,6 +59,16 @@ All architectural and design decisions with rationale. Coding agents should trea
 | One data hook per resource, not per component | `useBuckets`, `useCalendarEvents`, `useConversations` — each hook owns all fetching and mutations for its resource. Refetches on local mutations and on window focus. Single refetch function with dedup prevents competing fetches. |
 | WebSocket is chat-only, no event bus | WebSocket exists only for agent chat streaming (`text_delta`, `text_done`, `chat`, `error`). No `data_changed` events, no `EventEmitter`, no `WebSocketProvider`. Connection is per-conversation (`/ws?conversationId=xxx`), opened when a conversation is active, reconnects on switch. Data hooks use REST and refetch after their own mutations. Agent-initiated data changes are picked up when `text_done` fires — all active hooks refetch at that point. Simpler than a real-time event bus; acceptable staleness during agent execution since the user is watching the chat stream. |
 
+## Implementation Deviations (Phase 2)
+
+| Decision | Rationale |
+|---|---|
+| Local Homebrew Postgres instead of Docker | Davis uses Homebrew Postgres, not Docker. `DATABASE_URL=postgresql://daviscohen@localhost:5432/pa_agent` (no password). `tests/setup.ts` defaults to this URL so `pnpm test` works without manual env setup. `docker-compose.yml` kept for future reference / Railway deploy context. |
+| `skipLibCheck: true` added to tsconfig.server.json | `drizzle-orm@0.38` ships broken type declarations for mysql/sqlite/singlestore adapters. These errors appear during `tsc` even though we only use the pg adapter. `skipLibCheck` is the standard fix for third-party declaration errors outside our control. |
+| Migration meta files excluded from biome | Added `!src/server/db/migrations/**` to biome `includes`. Drizzle generates `_journal.json` and snapshot JSON that don't match biome's formatter expectations. These are auto-generated files not owned by us. |
+| Seed data embedded in initial migration (not a separate file) | The plan called for a "seed migration" as a separate file, but that risks numbering collision with future `drizzle-kit generate` output. Embedding both the trigger and seed SQL at the end of the initial migration is simpler and collision-free. |
+| `db/index.ts` uses explicit null check instead of `!` assertion | Biome's `noNonNullAssertion` rule forbids `process.env.DATABASE_URL!`. Replaced with `if (!databaseUrl) throw new Error(...)` which is also more aligned with the fail-fast principle. |
+
 ## Security & Robustness
 
 | Decision | Rationale |

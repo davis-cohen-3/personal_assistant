@@ -178,21 +178,13 @@ The decisions log says hooks refetch on window focus, but no hook spec includes 
 
 **Fix:** Simplify to one set during any diagram update.
 
-### FEAS-004: Drizzle FK to non-PK unique column may generate unexpected SQL
+### ~~FEAS-004: Drizzle FK to non-PK unique column may generate unexpected SQL~~ RESOLVED
 
-`thread_buckets.thread_id` references `email_threads.gmail_thread_id` (unique, but not the PK). Drizzle may generate unexpected foreign key SQL.
+Drizzle generated the `ALTER TABLE ADD CONSTRAINT FOREIGN KEY` statements for `email_messages` and `thread_buckets` *before* the `CREATE UNIQUE INDEX` on `email_threads.gmail_thread_id`. Postgres requires the unique index to exist before accepting a FK that references it. Fixed by manually reordering the initial migration to create `email_threads_gmail_thread_id_idx` before any FK constraints that reference it.
 
-**Fix:** Inspect the generated migration SQL and verify the FK constraint is correct.
+### ~~FEAS-005: Batch upsert conflict target must be unique column~~ RESOLVED
 
-**Where:** `src/server/db/schema.ts` — `thread_buckets` table
-
-### FEAS-005: Batch upsert conflict target must be unique column
-
-`assignThreadsBatch` uses `onConflictDoUpdate` — verify the conflict target is the correct unique column, not just the PK.
-
-**Fix:** Enforce the 25-row cap in the query function. Verify generated SQL.
-
-**Where:** `src/server/db/queries.ts` — `assignThreadsBatch()`
+`assignThreadsBatch` uses `onConflictDoUpdate({ target: threadBuckets.gmail_thread_id, ... })` which correctly targets the unique index on that column. 25-row cap enforced via `if (assignments.length > BATCH_SIZE) throw AppError(400)`. Verified by test.
 
 ### FEAS-011: expiry_date epoch ms to Date conversion must be explicit
 
@@ -250,13 +242,9 @@ The flow for picking a bucket template on first launch is described in the syste
 
 **Fix:** Build a simple modal/page during frontend implementation. The API endpoints (`GET /api/bucket-templates`, `POST /api/bucket-templates/:id/apply`) are already designed.
 
-### MIN-008: Bucket template JSONB shape is untyped
+### ~~MIN-008: Bucket template JSONB shape is untyped~~ RESOLVED
 
-`bucket_templates.buckets` is `jsonb` with no runtime validation. The spec says `Array<{ name, description, sort_order }>` but nothing enforces it.
-
-**Fix:** Add a Zod schema to validate the JSONB when reading templates in `applyBucketTemplate()`.
-
-**Where:** `src/server/db/queries.ts` — `applyBucketTemplate()`
+`applyBucketTemplate` validates `template.buckets` with `BucketDefinitionSchema` (Zod array of `{ name, description, sort_order }`) before inserting. Invalid JSONB throws a ZodError at call time.
 
 ### MIN-009: Architecture linter bypass via barrel re-exports
 
@@ -268,11 +256,9 @@ The regex-based module boundary linter (`lint_module_boundaries.ts`) checks impo
 
 **Fix:** Pin to a specific version in `package.json` devDependencies during setup.
 
-### MIN-011: Drizzle manual migration naming may collide (CLARITY-009, FEAS-010)
+### ~~MIN-011: Drizzle manual migration naming may collide~~ RESOLVED
 
-The custom `updated_at` trigger migration is named `0001_updated_at_trigger.sql`. Drizzle Kit auto-generates migrations with numeric prefixes too, which could collide. Also, hand-written SQL migrations may conflict with Drizzle's migration journal.
-
-**Fix:** Embed the trigger in the initial generated migration, or use a distinctive prefix and track in the journal.
+Both the `set_updated_at()` trigger and the bucket template seed data were embedded directly into the Drizzle-generated `0000_perfect_steve_rogers.sql` migration. No separate migration file was created, so there is no numbering collision risk.
 
 ### MIN-013: No documented rule for orchestration layers
 
