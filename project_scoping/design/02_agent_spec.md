@@ -42,10 +42,17 @@ const agentOptions = {
   agents: { /* subagent definitions — see Subagents section */ }
 };
 
-// 3. Stream to WebSocket (V1 API)
-for await (const msg of query({ prompt: userMessage, options: agentOptions })) {
-  if (msg.type === "assistant") {
-    ws.send(JSON.stringify({ type: "assistant", content: msg.message.content }));
+// 3. Stream token-by-token to WebSocket (set includePartialMessages: true)
+// msg.type === 'stream_event' wraps RawMessageStreamEvent from the Anthropic API
+// Text tokens arrive as: msg.event.type === 'content_block_delta' + msg.event.delta.type === 'text_delta'
+// session_id is on every SDKMessage — capture from the first message (type=system, subtype=init)
+for await (const msg of query({ prompt: userMessage, options: { ...agentOptions, includePartialMessages: true } })) {
+  if (msg.type === "system" && msg.subtype === "init") {
+    capturedSessionId = msg.session_id;
+  } else if (msg.type === "stream_event" && msg.event.type === "content_block_delta" && msg.event.delta.type === "text_delta") {
+    ws.send(JSON.stringify({ type: "token", delta: msg.event.delta.text }));
+  } else if (msg.type === "result") {
+    ws.send(JSON.stringify({ type: "done" }));
   }
 }
 
@@ -54,6 +61,22 @@ for await (const msg of query({ prompt: nextMessage, options: { ...agentOptions,
   // same streaming logic
 }
 ```
+
+### In-Process MCP Server: Fresh Instance Per Call (IMP-019 — resolved)
+
+**`createSdkMcpServer()` instances cannot be reused across `query()` calls.** Each call connects a new transport; reusing the instance throws `Already connected to a transport`. In 0.1.77 this silently hung; in 0.2.81 it throws immediately.
+
+**Required pattern:** create a fresh server instance inside each `query()` invocation:
+
+```typescript
+function makeMcpServer() {
+  return createSdkMcpServer({ name: "assistant-tools", version: "1.0.0", tools });
+}
+// Per WebSocket message:
+for await (const msg of query({ prompt, options: { ...opts, mcpServers: { "assistant-tools": makeMcpServer() } } })) { ... }
+```
+
+The tool definitions array (`tools`) can be a module-level constant — only the server wrapper needs to be re-created each call.
 
 ### MCP Tool Naming Convention
 
@@ -69,7 +92,7 @@ Tools are referenced as `mcp__{serverName}__{toolName}`:
 The Agent SDK stores sessions as `.jsonl` files on disk (`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`), where `<encoded-cwd>` replaces non-alphanumeric chars with `-`. Each conversation maps to one SDK session via `conversations.sdk_session_id` in Postgres.
 
 - **Resume**: When a WebSocket connects for an existing conversation, the backend passes `resume: sessionId` in `query()` options to restore the SDK session with its full context
-- **Fresh start**: If the session file is missing (Railway redeploy, scale-to-zero), `query()` is called without `resume` to start a fresh SDK session. The conversation's `sdk_session_id` is updated in Postgres. Past messages remain visible in the UI from Postgres, but the agent has no memory of prior context
+- **Fresh start**: If the session file is missing (Railway redeploy, scale-to-zero), `query()` is called without `resume` to start a fresh SDK session. The conversation's `sdk_session_id` is updated in Postgres. Past messages remain visible in the UI from Postgres, but the agent has no memory of prior context. **IMPORTANT:** If the session file is missing, do NOT pass the stale ID to `resume` — the SDK throws immediately with a UUID validation error (IMP-017). Wrap the `query()` call in try/catch and retry without `resume` on error.
 - **In-memory option**: Pass `persistSession: false` to skip disk writes (not used in production, but useful for testing)
 
 ### Auto-Compaction
@@ -96,7 +119,7 @@ When compacting conversation history, always preserve:
 | Event | Behavior |
 |---|---|
 | New conversation created | `query({ prompt, options })` → fresh `.jsonl` file, `session_id` from result saved to Postgres |
-| WebSocket connects to existing conversation | `query({ prompt, options: { ...opts, resume: sessionId } })`. If session file missing, SDK starts fresh session |
+| WebSocket connects to existing conversation | `query({ prompt, options: { ...opts, resume: sessionId } })`. If session ID is invalid/missing, SDK throws immediately — catch and retry without `resume` |
 | WebSocket disconnects | No cleanup needed — session file preserved on disk for future resume |
 | New user message on existing session | `query({ prompt: nextMessage, options: { ...opts, resume: sessionId } })` |
 | Railway redeploy / scale-to-zero | SDK session files lost. Next connection starts fresh session |

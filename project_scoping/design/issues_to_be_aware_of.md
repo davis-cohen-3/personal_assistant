@@ -48,13 +48,11 @@ The WebSocket handler calls `getQueryParam(ws, 'conversationId')` but this funct
 
 **Where:** `src/server/auth.ts`, `src/server/index.ts` — env validation
 
-### HIGH-10: Streaming may not be token-by-token (FEAS-003)
+### ~~HIGH-10: Streaming may not be token-by-token~~ RESOLVED
 
-The SDK's `AssistantMessage` type may emit full content blocks, not individual tokens. The `text_delta` WebSocket messages could deliver one large chunk at a time, not the smooth typing effect depicted in wireframes.
+Token-by-token streaming confirmed working. Set `includePartialMessages: true` in options — the SDK then emits `type: 'stream_event'` messages (`SDKPartialAssistantMessage`) wrapping `RawMessageStreamEvent`. Text tokens arrive as `event.type === 'content_block_delta'` with `delta.type === 'text_delta'`. Without the flag, you get one complete `SDKAssistantMessage` per turn.
 
-**Fix:** Verify whether the SDK emits multiple progressive `AssistantMessage` events during a single turn. If not, adjust frontend expectations or use the Anthropic API directly for token streaming.
-
-**Where:** `src/server/agent.ts` — `streamQuery()`
+Handle in `streamQuery()`: filter for `msg.type === 'stream_event'` then `msg.event.type === 'content_block_delta'` + `delta.type === 'text_delta'` to forward tokens to the WebSocket client.
 
 ### SEC-002: OAuth callback reflects raw Google error in redirect URL
 
@@ -86,13 +84,46 @@ Only the agent (via the `buckets create` tool) triggers `markAllForRebucket()`. 
 
 **Where:** `src/server/tools.ts` — `buckets` handler, `create` action; `src/server/routes.ts` — `POST /api/buckets`
 
-### IMP-017: SDK session resume behavior unknown (LOGIC-011)
+### IMP-017: SDK session resume with bad session ID — hangs then throws (LOGIC-011)
 
-The design assumes `new Agent({ resume: 'nonexistent-id' })` throws when the session file is missing, and the catch block creates a fresh session. This hasn't been verified. If it hangs or no-ops instead of throwing, the fallback logic breaks.
+**Verified behavior (SDK 0.2.81):** Passing a syntactically invalid session ID (not UUID format) throws immediately with a clear error: `Error: --resume requires a valid session ID when used with --print. ... Provided value "..." is not a valid UUID`. The SDK also emits a `type: 'system'` message with a new `session_id` before throwing (so `started fresh` is briefly true). The error is synchronous — no hang.
 
-**Fix:** Test this early when wiring up the Agent SDK. If it doesn't throw, add a `Promise.race` with 30s timeout or check for session file existence before attempting resume.
+Note: the earlier 63-second hang was a 0.1.77 bug, not the real behavior.
+
+**Fix:** The catch-and-retry pattern in the spec is correct — wrap the `query()` call with `resume` in a try/catch, and on error start a fresh session. No timeout needed since the throw is fast.
 
 **Where:** `src/server/agent.ts` — session initialization in `handleWebSocket()`
+
+### IMP-018: SDK version 0.1.77 is very old — upgrade to 0.2.x before Phase 8
+
+The installed `@anthropic-ai/claude-agent-sdk` appears to be v0.1.77, but the SDK's versioning jumped from 0.1.x to 0.2.x. Current latest as of 2026-03-21 is **v0.2.81**. The gap includes many session resume fixes, in-process MCP stability fixes, and new capabilities. Key fixes missed on 0.1.x:
+- v0.2.51: Fixed `session.close()` breaking `resumeSession()` + unbounded memory growth
+- v0.2.69: Fixed in-process MCP servers getting disconnected on config refresh
+- v0.2.72: Fixed `toggleMcpServer`/`reconnectMcpServer` failing for SDK-registered servers
+- v0.2.79: Added `'resume'` to `ExitReason` type
+- v0.2.80: Fixed `getSessionMessages()` dropping parallel tool results
+
+**Fix:** Run `pnpm add @anthropic-ai/claude-agent-sdk@latest` and verify spike behavior is unchanged on 0.2.x before wiring Phase 8.
+
+**Where:** `package.json`
+
+### IMP-019: In-process MCP server deadlock on resume + tool call (NEW — spike finding)
+
+**Observed behavior (0.1.77):** Resuming a session where the model calls an in-process MCP tool hung indefinitely — the hang was caused by passing the same `createSdkMcpServer()` instance to multiple `query()` calls. In 0.1.77 this silently deadlocked; in 0.2.81 it throws immediately: `Error: Already connected to a transport. Call close() before connecting to a new transport, or use a separate Protocol instance per connection.`
+
+**Root cause (confirmed):** `createSdkMcpServer()` returns a stateful instance. Each `query()` call connects a new transport to it — reusing the instance across calls fails on the second call.
+
+**Fix (verified working):** Create a fresh server instance per `query()` call:
+```typescript
+function makeMcpServer() {
+  return createSdkMcpServer({ name: "assistant-tools", version: "1.0.0", tools });
+}
+// In handleWebSocket():
+for await (const msg of query({ prompt, options: { ...opts, mcpServers: { "assistant-tools": makeMcpServer() } } })) { ... }
+```
+**This affects every user message** — each WebSocket message calls `query()`, so each needs a fresh server instance. Spike confirmed this resolves Phase C completely on SDK 0.2.81.
+
+**Where:** `src/server/agent.ts` — `createSdkMcpServer()` setup; must not be module-level singleton
 
 ### LOGIC-006: Archive from direct UI doesn't refresh BucketBoard
 
@@ -114,17 +145,13 @@ The route table lists `POST /gmail/threads/:id/reply`, `POST /gmail/threads/:id/
 
 ## Medium — Verify When You Hit It
 
-### CLARITY-002 / LOGIC-014: Model ID needs verification
+### ~~CLARITY-002 / LOGIC-014: Model ID needs verification~~ RESOLVED
 
-The spec uses `"claude-opus-4-6"` as the model identifier. Verify the exact model string accepted by the Agent SDK before hardcoding.
+`"claude-opus-4-6"` is the correct model string. The newer Claude 4.x models use undated API IDs — no snapshot suffix needed (contrast with older `claude-opus-4-20250514`). `supportedModels()` returns only shorthand aliases (`"default"`, `"opus"`, `"haiku"`) but the full string can be passed directly to `options.model`. Confirmed against official models documentation.
 
-**Where:** `src/server/agent.ts`
+### ~~CLARITY-010: Which SDK message type carries session_id~~ RESOLVED
 
-### CLARITY-010: Which SDK message type carries session_id
-
-The spec says to extract `session_id` from the SDK response but doesn't specify which message type contains it. Inline the relevant message shape when implementing.
-
-**Where:** `src/server/agent.ts` — `streamQuery()`
+`session_id` is present on every `SDKMessage` type — `system/init`, `assistant`, `user`, `result`, `stream_event`, etc. First appears on the `type: 'system', subtype: 'init'` message, which is the first message emitted. Safe to capture it from the first message and store immediately.
 
 ### CLARITY-014: WebSocket CSRF — sameSite: Strict sufficiency
 
