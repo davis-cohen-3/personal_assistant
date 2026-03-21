@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { authMiddleware, googleAuthRoutes } from "./auth.js";
 import { AppError } from "./exceptions.js";
 import { loadTokens } from "./google/index.js";
+import { apiRoutes } from "./routes.js";
 
 const REQUIRED_ENV = [
   "DATABASE_URL",
@@ -48,6 +49,7 @@ app.route("/auth", googleAuthRoutes);
 
 // Protected routes — require valid session
 app.use("/api/*", authMiddleware);
+app.route("/api", apiRoutes);
 
 const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
   console.error(`Server listening on http://localhost:${info.port}`);
