@@ -331,6 +331,16 @@ During batch bucketing, `countUnbucketedThreads` is called after each batch to c
 
 **Where:** `src/server/tools.ts` — `buckets` handler
 
+### MIN-016: email.ts sendMessage/createDraft do not expose attachments (deferred to v2)
+
+`gmail.ts` fully supports attachments via `EmailAttachment[]` in `SendMessageOptions`. `email.ts` narrows `sendMessage` opts to `{ cc?: string[] }` and `createDraft` opts to `{ attachments?: EmailAttachment[] }` (draft only). Neither the MCP `action_email` tool nor the REST send/reply routes can pass attachments through as a result.
+
+Acceptable for v1 — the agent's classify/summarize/draft-reply workflows don't require sending attachments.
+
+**Fix (v2):** Expand `email.ts` `sendMessage` opts to include `bcc`, `replyTo`, and `attachments` from `SendMessageOptions`. Update the `action_email` tool and send route schemas accordingly.
+
+**Where:** `src/server/email.ts` — `sendMessage`, `createDraft`
+
 ### SEC-011: SDK session IDs stored in Postgres (informational)
 
 Session IDs are stored in the `conversations` table. These are opaque identifiers, not secrets, but worth noting for awareness.
