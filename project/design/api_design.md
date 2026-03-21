@@ -2,13 +2,13 @@
 
 ## Overview
 
-HTTP + WebSocket API served by Hono. All routes under `/api/*` require auth middleware. Routes parse requests, call exactly one core function, and return responses. No business logic in route handlers.
+HTTP + WebSocket API served by Hono. All routes under `/api/*` require auth middleware. Routes parse requests, call exactly one service function, and return responses. No business logic in route handlers.
 
 **Middleware stack:** request-id → request-logger → cors → auth (see [backend_architecture.md](backend_architecture.md)).
 
 **Error handling:** Global `app.onError` maps domain exceptions to HTTP status codes (see [backend_architecture.md](backend_architecture.md#error-handling)).
 
-**Import rules:** Route files import from `core/`, `infra/`, `db/schema` (types only), and `shared/`. Never from `db/` query functions, `drizzle-orm`, or `connectors/`.
+**Import rules:** Route files import from `services/`, `infra/`, `db/schema` (types only), and `shared/`. Never from `db/` query functions, `drizzle-orm`, or `connectors/`.
 
 ---
 
@@ -724,7 +724,7 @@ The response returns the stored `BriefingContent` JSONB directly — IDs + summa
 
 **File:** `routes/agent.ts`
 
-Routes for agent interaction. These are the only routes that import from `agents/` — all other routes go through `core/`.
+Routes for agent interaction. These are the only routes that import from `agents/` — all other routes go through `services/`.
 
 | Method | Path | Handler | Description |
 |---|---|---|---|

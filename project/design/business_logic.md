@@ -1,20 +1,20 @@
-# Business Logic Modules
+# Service Modules
 
 ## Overview
 
-Every module in `core/` exports plain async functions — no classes, no `this`. Functions receive `db: DB` as their first argument (Drizzle instance or transaction handle). Core is the single authority for business logic: routes call core, agents call core, the heartbeat calls core. Nobody else owns validation, state transitions, or transaction boundaries.
+Every module in `services/` exports plain async functions — no classes, no `this`. Functions receive `db: DB` as their first argument (Drizzle instance or transaction handle). Services are the single authority for all operations: routes call services, agent tools call services, the heartbeat calls services. Nobody else owns validation, state transitions, transaction boundaries, or connector orchestration.
 
-**Core handles data operations only** — no LLM calls, no classification, no message drafting. Agent-driven workflows (sort inbox, prep meeting, briefing generation, completion detection) live in `agents/`, which calls `core/` for persistence.
+**Services handle business logic + connector orchestration** — no LLM calls, no classification, no message drafting. Agent-driven workflows (sort inbox, prep meeting, briefing generation, completion detection) live in `agents/`, which calls `services/` for all data and external API operations.
 
-**Import rules:** `core/` imports from `db/`, `infra/`, and `shared/` only. Never from `connectors/`, `drizzle-orm`, `agents/`, or `routes/`. Core is pure — no external API calls. Functions that need external data receive it as parameters from the caller (agent tools or routes). See [backend_architecture.md](backend_architecture.md#layer-import-rules).
+**Import rules:** `services/` imports from `db/`, `connectors/`, `infra/`, and `shared/` only. Never from `drizzle-orm`, `agents/`, or `routes/`. See [backend_architecture.md](backend_architecture.md#layer-import-rules).
 
-**Error handling:** Core throws domain exceptions (`NotFoundError`, `ConflictError`, `ValidationError`, `ExternalServiceError`). Routes map to HTTP status codes. Agents map to user-facing messages. See [backend_architecture.md](backend_architecture.md#error-handling).
+**Error handling:** Services throw domain exceptions (`NotFoundError`, `ConflictError`, `ValidationError`, `ExternalServiceError`). Routes map to HTTP status codes. Agents map to user-facing messages. See [backend_architecture.md](backend_architecture.md#error-handling).
 
 ---
 
-## core/errors.ts
+## services/errors.ts
 
-Domain exception hierarchy. Defined here, thrown by all core modules, caught by callers.
+Domain exception hierarchy. Defined here, thrown by all service modules, caught by callers.
 
 ```typescript
 NotFoundError(entity: string, id: string)    // 404
@@ -25,7 +25,7 @@ ExternalServiceError(message: string)        // 502 — Gmail/Calendar/Drive fai
 
 ---
 
-## core/people.ts
+## services/people.ts
 
 ### Public Functions
 
@@ -87,7 +87,7 @@ None. People is a local-only entity. Interaction history is derived by querying 
 
 ---
 
-## core/threads.ts
+## services/threads.ts
 
 ### Public Functions
 
@@ -122,6 +122,12 @@ Reassigns all threads from a given bucket to other buckets. Called within a tran
 - **Validation:** `buckets` array must not be empty — throws `ValidationError` if no remaining buckets.
 - This function is always called inside a transaction opened by the caller.
 
+#### `fetchNewThreads(db: DB): Promise<Thread[]>`
+
+Fetches recent threads from Gmail via `emailClient` singleton, upserts them into the database. Returns the new/updated thread records. Used by the agent's Sort Inbox skill and by the heartbeat.
+
+- **Connector usage:** Calls `emailClient.searchThreads`. Wraps connector failures in `ExternalServiceError`.
+
 #### `applyInvestigationPlan(db: DB, threadId: string, plan: InvestigationPlan): Promise<void>`
 
 Persists the results of an agent thread investigation. **Transactional** — creates people + tasks + actions atomically.
@@ -129,13 +135,13 @@ Persists the results of an agent thread investigation. **Transactional** — cre
 ```typescript
 await db.transaction(async (tx) => {
   for (const person of plan.newPeople) {
-    await peopleCore.create(tx, person, 'agent');
+    await peopleService.create(tx, person, 'agent');
   }
   for (const task of plan.extractedTasks) {
-    await taskCore.create(tx, task, 'agent');
+    await taskService.create(tx, task, 'agent');
   }
   for (const action of plan.proposedActions) {
-    await actionCore.create(tx, action);
+    await actionService.create(tx, action);
   }
 });
 ```
@@ -144,16 +150,16 @@ The agent (in `agents/skills/investigate-thread.ts`) fetches full thread content
 
 ### Connector Usage
 
-None. Thread syncing from Gmail is handled by `agents/tools/thread-tools.ts → fetchInbox()`, which calls the connector to fetch threads and then calls `core/threads.upsertFromGmail` to persist. Core never calls connectors.
+`fetchNewThreads` imports `emailClient` singleton to fetch thread list from Gmail, then upserts via `db/threads`.
 
 ### Cross-Module Calls
 
-- `applyInvestigationPlan` calls `peopleCore.create`, `taskCore.create`, and `actionCore.create` inside a transaction.
-- `reassignThreads` is called by `bucketCore.remove` within the caller's transaction.
+- `applyInvestigationPlan` calls `peopleService.create`, `taskService.create`, and `actionService.create` inside a transaction.
+- `reassignThreads` is called by `bucketService.remove` within the caller's transaction.
 
 ---
 
-## core/buckets.ts
+## services/buckets.ts
 
 ### Public Functions
 
@@ -191,7 +197,7 @@ Deletes a bucket after reassigning its threads to remaining buckets.
 ```typescript
 await db.transaction(async (tx) => {
   const remaining = await bucketsDb.listExcluding(tx, id);
-  await threadsCore.reassignThreads(tx, id, remaining);
+  await threadsService.reassignThreads(tx, id, remaining);
   await bucketsDb.remove(tx, id);
 });
 ```
@@ -202,11 +208,11 @@ Creates default buckets on initial setup. Idempotent — skips if buckets alread
 
 ### Cross-Module Calls
 
-- `remove` calls `threadsCore.reassignThreads` inside its transaction.
+- `remove` calls `threadsService.reassignThreads` inside its transaction.
 
 ---
 
-## core/events.ts
+## services/events.ts
 
 ### Public Functions
 
@@ -226,6 +232,12 @@ Returns the meeting brief for an event. Throws `NotFoundError` if event not foun
 
 Creates or updates an event record from Google Calendar API data. Matches on `google_event_id`. Resolves participant emails to People IDs via `peopleDb.findByEmail`. Unresolved participants are stored by email for later resolution.
 
+#### `syncFromCalendar(db: DB, timeRange: { from: Date, to: Date }): Promise<Event[]>`
+
+Fetches events from Google Calendar for the given range and upserts them. Used by heartbeat and Start Day.
+
+- **Connector usage:** Imports `calendarClient` singleton, calls `listEvents`. Non-transactional — each event is independent.
+
 #### `saveBrief(db: DB, id: string, brief: EventBrief, preMetadata: PreMetadata): Promise<Event>`
 
 Saves an agent-generated meeting brief and pre-metadata to an event. Called by the agent's Prep Meeting skill after LLM brief generation.
@@ -238,10 +250,10 @@ Persists post-meeting processing results. **Transactional** — updates event + 
 await db.transaction(async (tx) => {
   await eventsDb.updatePostMetadata(tx, id, plan.postMetadata);
   for (const task of plan.extractedTasks) {
-    await taskCore.create(tx, task, 'agent');
+    await taskService.create(tx, task, 'agent');
   }
   for (const action of plan.proposedActions) {
-    await actionCore.create(tx, action);
+    await actionService.create(tx, action);
   }
 });
 ```
@@ -252,22 +264,25 @@ The agent (in `agents/skills/post-meeting.ts`) checks for follow-up threads, new
 
 Queries events where `end_time < now` and `post_metadata IS NULL`. Used by the heartbeat to find meetings needing post-processing.
 
-#### `resolveParticipant(db: DB, personId: string): Promise<{ name: string, email: string } | null>`
+#### `resolveParticipant(db: DB, personId: string, googleEventId: string): Promise<{ name: string, email: string }>`
 
-Resolves a participant by People ID from the database. Returns `null` if the person is soft-deleted or not found. The caller (agent tool) handles the Calendar API fallback if needed.
+Resolves a participant by People ID. If the person is soft-deleted, falls back to the Google Calendar event to retrieve their name/email from the original event data.
+
+- **Connector usage:** Imports `calendarClient` singleton for fallback resolution.
 
 ### Connector Usage
 
-None. Calendar syncing is handled by `agents/tools/event-tools.ts → syncCalendar()`, which calls the connector to fetch events and then calls `core/events.upsertFromCalendar` to persist. Participant fallback resolution via Calendar API is also handled by the tool layer. Core never calls connectors.
+- `syncFromCalendar` imports `calendarClient` singleton to fetch events from Google Calendar.
+- `resolveParticipant` imports `calendarClient` singleton for fallback resolution of soft-deleted people.
 
 ### Cross-Module Calls
 
-- `applyPostMeetingPlan` calls `taskCore.create` and `actionCore.create` inside its transaction.
+- `applyPostMeetingPlan` calls `taskService.create` and `actionService.create` inside its transaction.
 - `upsertFromCalendar` calls `peopleDb.findByEmail` (db layer, not core) to resolve participant IDs.
 
 ---
 
-## core/tasks.ts
+## services/tasks.ts
 
 ### Public Functions
 
@@ -319,7 +334,7 @@ Finds all tasks with status `in_progress` and `due_date < now`, transitions them
 
 #### `getActiveForCompletionCheck(db: DB): Promise<Task[]>`
 
-Returns all tasks with status `in_progress` or `overdue` — the set the agent reviews for potential completions. The agent (in the heartbeat flow) analyzes these against recent thread activity via LLM and calls `transition` + `actionCore.create` for any detected completions.
+Returns all tasks with status `in_progress` or `overdue` — the set the agent reviews for potential completions. The agent (in the heartbeat flow) analyzes these against recent thread activity via LLM and calls `transition` + `actionService.create` for any detected completions.
 
 ### State Machine
 
@@ -353,11 +368,11 @@ proposed ──→ confirmed ──→ in_progress ──→ complete_proposed �
 
 ### Cross-Module Calls
 
-- Created by `threadsCore.applyInvestigationPlan` and `eventsCore.applyPostMeetingPlan` inside their transactions.
+- Created by `threadsService.applyInvestigationPlan` and `eventsCore.applyPostMeetingPlan` inside their transactions.
 
 ---
 
-## core/actions.ts
+## services/actions.ts
 
 ### Public Functions
 
@@ -380,50 +395,36 @@ Creates an action record.
 
 #### `approve(db: DB, id: string, editedInput?: Record<string, unknown>): Promise<Action>`
 
-Validates and marks a proposed action as `approved`. **Does not execute the external side effect** — that is handled by the caller (route or agent tool) via `agents/tools/action-tools.ts → executeApprovedAction()`.
+Approves a proposed action and executes it. The service owns the full lifecycle: validate → mark approved → dispatch to connector → mark executed/failed.
 
 - **Validation:**
   - Throws `NotFoundError` if action doesn't exist.
   - Throws `ValidationError` if not in `proposed` status ("can't approve a non-proposed action").
   - Throws `ValidationError` if action has expired.
-- **If `editedInput` provided:** Merges over original `input` before marking approved.
-- **Returns:** The approved action (with merged input if applicable). The caller then executes externally and calls `markExecuted` or `markFailed`.
+- **If `editedInput` provided:** Merges over original `input` before execution.
 
-#### `markExecuted(db: DB, id: string, output: Record<string, unknown>): Promise<Action>`
-
-Marks an approved action as successfully executed. Sets `executed_at` and stores the output. Called by the tool layer after the external side effect succeeds.
-
-- **Validation:** Throws `ValidationError` if not in `approved` status.
-- **Post-execution:** For certain operations, triggers downstream state changes. E.g., after `task.delegate` is executed, calls `taskCore.update` to set `delegated_to`.
-
-#### `markFailed(db: DB, id: string, error: string): Promise<Action>`
-
-Marks an approved action as failed. Stores the error message. Called by the tool layer after the external side effect fails.
-
-- **Validation:** Throws `ValidationError` if not in `approved` status.
-
-**Split-transaction pattern (now managed by agent tool):**
+**Execution flow (split transaction — see [backend_architecture.md](backend_architecture.md#side-effect-actions-split-transaction)):**
 
 ```typescript
-// In agents/tools/action-tools.ts → executeApprovedAction()
+// Step 1: Mark approved (DB write)
+await actionsDb.transition(db, id, 'approved');
 
-// Step 1: Core marks approved (DB write)
-const action = await actionsCore.approve(db, id, editedInput);
-
-// Step 2: Tool executes external side effect via connector
+// Step 2: Execute external side effect via connector
 try {
-  const result = await executeViaConnector(action);
+  const result = await dispatchToConnector(action);
 
-  // Step 3a: Core marks executed (DB write)
-  await actionsCore.markExecuted(db, id, result);
+  // Step 3a: Mark executed (DB write)
+  await actionsDb.markExecuted(db, id, result);
 } catch (err) {
-  // Step 3b: Core marks failed (DB write)
-  await actionsCore.markFailed(db, id, err.message);
-  throw err;
+  // Step 3b: Mark failed (DB write)
+  await actionsDb.markFailed(db, id, err.message);
+  throw new ExternalServiceError(err.message);
 }
 ```
 
 If step 2 succeeds but step 3a fails (DB down), the action stays `approved`. The heartbeat detects this and retries.
+
+- **Post-execution:** For certain operations, triggers downstream state changes. E.g., after executing `task.delegate`, calls `taskService.update` to set `delegated_to`.
 
 #### `reject(db: DB, id: string, reason?: string): Promise<Action>`
 
@@ -466,7 +467,7 @@ Read-only operations bypass the state machine — created directly as `executed`
 
 ### Connector Usage
 
-None. Core handles the action lifecycle (propose → approve → mark executed/failed). The actual external API dispatch is handled by `agents/tools/action-tools.ts → executeApprovedAction()`. See [agents_layer.md](agents_layer.md#action-tools).
+`approve` dispatches to the appropriate connector based on `action.operation` via an internal dispatch function. See the Operation Dispatch section below.
 
 ### Heartbeat Logic
 
@@ -475,19 +476,57 @@ None. Core handles the action lifecycle (propose → approve → mark executed/f
 
 ### Cross-Module Calls
 
-- `approve` may call `taskCore.transition` after executing task-related operations (e.g., after `task.complete` action is executed, transition task to `complete`).
-- `approve` may call `taskCore.update` after executing `task.delegate` (set `delegated_to`).
-- Created by `threadsCore.applyInvestigationPlan`, `eventsCore.applyPostMeetingPlan`, and agent completion detection.
+- `approve` may call `taskService.transition` after executing task-related operations (e.g., after `task.complete` action is executed, transition task to `complete`).
+- `approve` may call `taskService.update` after executing `task.delegate` (set `delegated_to`).
+- Created by `threadsService.applyInvestigationPlan`, `eventsCore.applyPostMeetingPlan`, and agent completion detection.
 
 ---
 
 ## Operation Dispatch
 
-Operation dispatch (mapping `action.operation` to the correct connector call) lives in `agents/tools/action-tools.ts`, not in core. Core only handles the approval/status lifecycle. See [agents_layer.md](agents_layer.md#action-tools) for the dispatch implementation.
+`services/actions.ts` maps an action's `operation` field to the correct connector call via an internal dispatch function:
+
+```typescript
+import { emailClient } from '../connectors/gmail';
+import { calendarClient } from '../connectors/google-calendar';
+import { driveClient } from '../connectors/google-drive';
+
+async function dispatchToConnector(
+  action: Action,
+): Promise<Record<string, unknown>> {
+  switch (action.operation) {
+    case 'email.send':
+    case 'email.draft_reply':
+    case 'email.draft_new':
+      return emailClient.sendEmail(action.input as SendEmailParams);
+
+    case 'calendar.create_event':
+      return calendarClient.createEvent(action.input as CreateEventParams);
+
+    case 'calendar.update_event':
+      return calendarClient.updateEvent(
+        action.input.eventId as string,
+        action.input as UpdateEventParams
+      );
+
+    case 'calendar.cancel_event':
+      await calendarClient.cancelEvent(action.input.eventId as string);
+      return {};
+
+    case 'doc.create':
+      return driveClient.createDocument(action.input as CreateDocParams);
+
+    default:
+      throw new ValidationError(`Unknown operation: ${action.operation}`);
+  }
+}
+```
+
+This dispatch is internal to the service. Callers just call `approve(db, id)` — the service handles the full lifecycle: mark approved → dispatch to connector → mark executed/failed.
 
 ---
 
-## core/briefings.ts
+## services/briefings.ts
 
 ### Public Functions
 
@@ -515,11 +554,11 @@ None. Briefings are assembled from data already in the database.
 
 ### Cross-Module Calls
 
-None. The agent calls `briefings.save` after assembling content from other core modules.
+None. The agent calls `briefings.save` after assembling content from other service modules.
 
 ---
 
-## core/preferences.ts
+## services/preferences.ts
 
 ### Overview
 
@@ -595,31 +634,31 @@ Reference: [backend_architecture.md](backend_architecture.md#transaction-boundar
 
 ## Heartbeat Dispatch
 
-The heartbeat cron calls tools for external data, core for pure data ops, and skills for LLM analysis. Each step is independent — one failure doesn't block others. The heartbeat is **not transactional** overall.
+The heartbeat cron calls services for all data ops and skills for LLM analysis. Each step is independent — one failure doesn't block others. The heartbeat is **not transactional** overall.
 
 ```typescript
 // Heartbeat pseudo-code (runs in cron job)
 async function heartbeat(db: DB) {
-  // === External data sync (tools — connector + core) ===
+  // === Data sync via services (connector + DB internally) ===
 
-  // 1. Threads: fetch new emails from Gmail, persist via core
-  const newThreads = await threadTools.fetchInbox(db);
+  // 1. Threads: fetch new emails from Gmail
+  const newThreads = await threadsService.fetchNewThreads(db);
 
-  // 2. Events: sync calendar changes, persist via core
-  await eventTools.syncCalendar(db, todayRange());
+  // 2. Events: sync calendar changes
+  await eventsService.syncFromCalendar(db, todayRange());
 
-  // === Pure business logic (core only — no external calls) ===
+  // === Business logic via services (DB only) ===
 
   // 3. Tasks: flag overdue
-  await tasksCore.flagOverdue(db);
+  await tasksService.flagOverdue(db);
 
   // 4. Actions: expire stale proposals
-  await actionsCore.expireStale(db, { hours: 24 });
+  await actionsService.expireStale(db, { hours: 24 });
 
   // 5. Actions: retry stuck approvals
-  await actionsCore.retryStuckApproved(db);
+  await actionsService.retryStuckApproved(db);
 
-  // === LLM analysis (skills — orchestrate tools) ===
+  // === LLM analysis via skills ===
 
   // 6. Threads: classify new threads via agent
   if (newThreads.length > 0) {
@@ -627,66 +666,66 @@ async function heartbeat(db: DB) {
   }
 
   // 7. Events: process ended meetings via agent
-  const endedEvents = await eventsCore.findEndedUnprocessed(db);
+  const endedEvents = await eventsService.findEndedUnprocessed(db);
   for (const event of endedEvents) {
     await skills.postMeeting(db, event.id)
       .catch(err => logger.error({ err, eventId: event.id }, 'post-meeting failed'));
   }
 
   // 8. Tasks: detect completions via agent
-  const activeTasks = await tasksCore.getActiveForCompletionCheck(db);
+  const activeTasks = await tasksService.getActiveForCompletionCheck(db);
   if (activeTasks.length > 0) {
     await skills.detectCompletions(db, activeTasks);
   }
 }
 ```
 
-Steps 1-2 use tools (connector + core composition). Steps 3-5 use core directly (pure data ops). Steps 6-8 use skills (LLM + tools). Each step logs independently. Failures in one step don't prevent subsequent steps.
+Steps 1-5 call services (which handle connectors and DB internally). Steps 6-8 use skills for LLM analysis (skills call services via tools). Each step logs independently. Failures in one step don't prevent subsequent steps.
 
 ---
 
 ## Connector Access
 
-**Core never imports connectors.** Connectors are module-level singletons accessed only by agent tools (see [backend_architecture.md](backend_architecture.md#singleton-pattern)). Agent tools compose connector reads with core writes:
+**Services own connector access.** Connectors are module-level singletons imported by service modules (see [backend_architecture.md](backend_architecture.md#singleton-pattern)). Services compose connector reads with DB writes in one place:
 
 ```typescript
-// agents/tools/thread-tools.ts — tool fetches from connector, persists via core
-import { emailClient } from '../../connectors';
-import * as threadsCore from '../../core/threads';
+// services/threads.ts — service owns the full "fetch + persist" flow
+import { emailClient } from '../connectors';
+import * as threadsDb from '../db/threads';
 
-export async function fetchInbox(db: DB): Promise<Thread[]> {
+export async function fetchNewThreads(db: DB): Promise<Thread[]> {
   // Step 1: Fetch from external API (connector)
   const gmailThreads = await emailClient.searchThreads('newer_than:1d');
 
-  // Step 2: Persist via core (business logic + DB)
+  // Step 2: Validate + persist (DB)
   const threads: Thread[] = [];
   for (const t of gmailThreads) {
-    threads.push(await threadsCore.upsertFromGmail(db, t));
+    threads.push(await upsertFromGmail(db, t));
   }
   return threads;
 }
 
-// agents/tools/event-tools.ts — same pattern
-import { calendarClient } from '../../connectors';
-import * as eventsCore from '../../core/events';
+// services/events.ts — same pattern
+import { calendarClient } from '../connectors';
+import * as eventsDb from '../db/events';
 
-export async function syncCalendar(db: DB, timeRange: TimeRange): Promise<Event[]> {
+export async function syncFromCalendar(db: DB, timeRange: TimeRange): Promise<Event[]> {
   const calEvents = await calendarClient.listEvents(timeRange.from, timeRange.to);
   const events: Event[] = [];
   for (const e of calEvents) {
-    events.push(await eventsCore.upsertFromCalendar(db, e));
+    events.push(await upsertFromCalendar(db, e));
   }
   return events;
 }
 ```
 
-Core functions like `threadsCore.upsertFromGmail` and `eventsCore.upsertFromCalendar` receive data and persist it — they never reach out to external services. For testing core, you only need a DB handle. For testing tools, you mock connectors.
+Routes, agent tools, and the heartbeat all call these service methods. Nobody else touches connectors.
 
 ---
 
 ## Validation Rules Summary
 
-Rules checked by core before proceeding. Violations throw `ValidationError` unless noted.
+Rules checked by services before proceeding. Violations throw `ValidationError` unless noted.
 
 | Rule | Module | Throws |
 |---|---|---|

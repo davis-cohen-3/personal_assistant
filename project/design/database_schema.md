@@ -118,7 +118,7 @@ export const threads = pgTable('threads', {
 
 **Trigger:** `set_updated_at()` BEFORE UPDATE.
 
-**FK behavior:** `bucket_id` ON DELETE RESTRICT — must re-sort threads out of a bucket before deleting it (handled in `core/buckets.ts` within a transaction, per [Backend Architecture](backend_architecture.md) § Transaction Boundaries).
+**FK behavior:** `bucket_id` ON DELETE RESTRICT — must re-sort threads out of a bucket before deleting it (handled in `services/buckets.ts` within a transaction, per [Backend Architecture](backend_architecture.md) § Transaction Boundaries).
 
 **`classification` JSONB shape** (Zod schema in `shared/schemas/thread.ts`):
 

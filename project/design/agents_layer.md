@@ -2,9 +2,9 @@
 
 ## Overview
 
-The agents layer is the intelligence tier of the system. It manages conversations with the Claude Agent SDK, defines tools the agent can use, and orchestrates multi-step workflows (skills). The agent layer is the **only place** where LLM calls happen and the **only place** where connector reads are composed with core writes.
+The agents layer is the intelligence tier of the system. It manages conversations with the Claude Agent SDK, defines tools the agent can use, and orchestrates multi-step workflows (skills). The agent layer is the **only place** where LLM calls happen.
 
-**Key principle:** Tools are the bridge between the agent and the system. They compose connector reads with core writes, ensuring all external data passes through business logic before persistence. Skills orchestrate tools into multi-step workflows with specific system prompts.
+**Key principle:** Tools are thin wrappers that expose service methods to the LLM. Services own all business logic and connector orchestration. Tools just define the schema and call the service.
 
 ---
 
@@ -14,12 +14,12 @@ The agents layer is the intelligence tier of the system. It manages conversation
 agents/
   client.ts              ← Claude Agent SDK client initialization
   orchestrator.ts        ← Conversation management, tool dispatch, streaming
-  tools/                 ← Tool definitions (bridge between agent and system)
+  tools/                 ← Tool definitions (thin wrappers over services)
     index.ts             ← Tool registry — exports all tools for the orchestrator
     thread-tools.ts      ← fetchInbox, classifyThread, investigateThread
     event-tools.ts       ← syncCalendar, prepMeeting, postMeeting
     task-tools.ts        ← createTask, delegateTask, detectCompletions
-    action-tools.ts      ← proposeAction, executeApprovedAction
+    action-tools.ts      ← proposeAction, approveAction
     people-tools.ts      ← proposePerson, lookupPerson
     briefing-tools.ts    ← assembleBriefing
     read-tools.ts        ← readThread, readEvent, readDocument, searchDocuments
@@ -38,14 +38,12 @@ agents/
 
 | Sublayer | May import from | Must NOT import from |
 |---|---|---|
-| `agents/tools/` | `core/`, `connectors/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `routes/` |
-| `agents/skills/` | `agents/tools/`, `core/`, `infra/`, `shared/` | `db/`, `connectors/`, `routes/` |
-| `agents/orchestrator.ts` | `agents/skills/`, `agents/tools/`, `core/`, `infra/`, `shared/` | `db/`, `connectors/`, `routes/` |
+| `agents/tools/` | `services/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `connectors/`, `routes/` |
+| `agents/skills/` | `agents/tools/`, `services/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `connectors/`, `routes/` |
+| `agents/orchestrator.ts` | `agents/skills/`, `agents/tools/`, `services/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `connectors/`, `routes/` |
 | `agents/client.ts` | `infra/`, `shared/` | Everything else |
 
-**Why skills can't import connectors:** Skills orchestrate tools. Tools handle connector access. This keeps the connector→core composition in one place (tools), not scattered across tools and skills.
-
-**Why skills can import core:** Skills may call core directly for pure data reads (e.g., `tasksCore.getActiveForCompletionCheck`) before deciding which tools to invoke. They don't call core for mutations — that goes through tools.
+**Tools never import connectors.** Services own connector access. A tool's job is to define the schema and call the service method — nothing more.
 
 ---
 
@@ -87,7 +85,7 @@ Processes a user message through the agent. Streams the response via WebSocket.
 ```typescript
 import { Agent } from '@anthropic-ai/agent-sdk';
 import { allTools } from './tools';
-import * as preferencesCore from '../core/preferences';
+import * as preferencesService from '../services/preferences';
 import { websocket } from '../infra/websocket';
 
 const conversationHistory: Message[] = [];
@@ -97,8 +95,8 @@ export async function chat(db: DB, message: string): Promise<void> {
   conversationHistory.push({ role: 'user', content: message });
 
   // Load preferences for agent context
-  const preferences = await preferencesCore.loadAll();
-  const profile = await preferencesCore.getProfile();
+  const preferences = await preferencesService.loadAll();
+  const profile = await preferencesService.getProfile();
 
   // Create agent with tools
   const agent = new Agent({
@@ -117,9 +115,9 @@ export async function chat(db: DB, message: string): Promise<void> {
         break;
 
       case 'tool_use':
-        // Execute tool and return result
+        // Execute tool — just calls the service method
         const result = await executeToolCall(db, event.name, event.input);
-        // Broadcast tool actions to frontend (e.g., action:proposed)
+        // Broadcast side effects to frontend (e.g., action:proposed)
         broadcastToolSideEffects(event.name, result);
         break;
 
@@ -141,6 +139,8 @@ import * as sortInbox from './skills/sort-inbox';
 import * as prepMeeting from './skills/prep-meeting';
 import * as postMeeting from './skills/post-meeting';
 import * as dailyBriefing from './skills/daily-briefing';
+import * as delegateTask from './skills/delegate-task';
+import * as investigateThread from './skills/investigate-thread';
 
 const skillMap = {
   'sort-inbox': sortInbox.run,
@@ -184,11 +184,11 @@ The orchestrator streams to the frontend via WebSocket. The route handler return
 
 ## agents/tools/ — Tool Definitions
 
-Tools are the bridge between the agent (LLM) and the system. Each tool is a function the agent can call, defined with a name, description, input schema, and handler.
+Tools are thin wrappers that expose service methods to the LLM. Each tool defines a name, description, input schema, and a handler that calls the corresponding service method.
 
 ### The Rule
 
-> **Tools call connectors for external reads. Tools call core for all business logic, validation, persistence, and state transitions. Tools never call db/ directly.**
+> **Tools call services. That's it.** Services handle connectors, DB, validation, state machines — everything. Tools just define the agent-facing interface.
 
 ### Tool Registration
 
@@ -217,250 +217,95 @@ export const allTools = [
 
 ### Tool Shape
 
-Each tool follows this pattern:
+Each tool is a thin wrapper. The handler is typically a one-liner:
 
 ```typescript
-{
-  name: 'fetch_inbox',
-  description: 'Fetch recent email threads from Gmail and persist them.',
-  input_schema: { type: 'object', properties: { ... }, required: [...] },
-  handler: async (db: DB, input: FetchInboxInput) => { ... }
-}
+// Example: agents/tools/thread-tools.ts
+import * as threadsService from '../../services/threads';
+
+export const threadTools = [
+  {
+    name: 'fetch_inbox',
+    description: 'Fetch recent email threads from Gmail and persist them.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+    handler: async (db: DB) => {
+      return await threadsService.fetchNewThreads(db);
+    },
+  },
+  {
+    name: 'classify_thread',
+    description: 'Classify a thread and assign it to a bucket.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        threadId: { type: 'string' },
+        classification: { type: 'object' },
+        bucketId: { type: 'string' },
+      },
+      required: ['threadId', 'classification', 'bucketId'],
+    },
+    handler: async (db: DB, input: ClassifyThreadInput) => {
+      return await threadsService.classifyAndAssign(db, input.threadId, input.classification, input.bucketId);
+    },
+  },
+  // ... more tools
+];
 ```
 
----
+### Tool Catalog
 
-### Thread Tools
+#### Thread Tools
 
-#### `fetch_inbox`
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `fetch_inbox` | `threadsService.fetchNewThreads` | Fetch from Gmail + upsert |
+| `classify_thread` | `threadsService.classifyAndAssign` | Set classification + bucket |
+| `investigate_thread` | `threadsService.applyInvestigationPlan` | Persist people + tasks + actions atomically |
 
-Fetches recent threads from Gmail and persists via core.
+#### Event Tools
 
-```typescript
-// Connector: emailClient.searchThreads (external read)
-// Core: threadsCore.upsertFromGmail (persist)
-```
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `sync_calendar` | `eventsService.syncFromCalendar` | Fetch from Calendar + upsert |
+| `save_meeting_brief` | `eventsService.saveBrief` | Persist agent-generated brief |
+| `apply_post_meeting_plan` | `eventsService.applyPostMeetingPlan` | Persist tasks + actions atomically |
 
-#### `classify_thread`
+#### Task Tools
 
-Classifies a single thread into a bucket. The agent provides the classification based on its analysis.
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `create_task` | `tasksService.create` | Validate + persist |
+| `transition_task` | `tasksService.transition` | Validate state machine + persist |
 
-```typescript
-// Core: threadsCore.classifyAndAssign (persist classification + bucket assignment)
-```
+#### Action Tools
 
-#### `investigate_thread`
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `propose_action` | `actionsService.create` | Persist proposal |
+| `approve_action` | `actionsService.approve` | Validate + dispatch to connector + mark result |
 
-Deep analysis of a thread — extracts people, tasks, and proposed actions.
+#### People Tools
 
-```typescript
-// Connector: emailClient.readThread (full thread content for LLM analysis)
-// Core: threadsCore.applyInvestigationPlan (persist results atomically)
-```
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `propose_person` | `peopleService.create(db, data, 'agent')` | Validate + persist as proposed |
+| `lookup_person` | `peopleService.getByEmail` | Look up by email |
+| `resolve_participant` | `eventsService.resolveParticipant` | DB lookup + Calendar fallback |
 
----
+#### Read Tools
 
-### Event Tools
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `read_thread` | `threadsService.readFullThread` | Get full thread content from Gmail via service |
+| `read_event` | `eventsService.getById` | Get event from DB |
+| `read_document` | `documentsService.getDocument` | Get doc content from Drive via service |
+| `search_documents` | `documentsService.searchDocuments` | Search Drive via service |
 
-#### `sync_calendar`
+#### Briefing Tools
 
-Fetches events from Google Calendar and persists via core.
-
-```typescript
-// Connector: calendarClient.listEvents (external read)
-// Core: eventsCore.upsertFromCalendar (persist)
-```
-
-#### `save_meeting_brief`
-
-Saves an agent-generated meeting brief.
-
-```typescript
-// Connector: emailClient.searchThreads, driveClient.searchDocuments (gather context)
-// Core: eventsCore.saveBrief (persist brief)
-```
-
-#### `apply_post_meeting_plan`
-
-Persists post-meeting processing results (tasks, actions).
-
-```typescript
-// Connector: emailClient.searchThreads (check for follow-up threads)
-// Core: eventsCore.applyPostMeetingPlan (persist atomically)
-```
-
----
-
-### Task Tools
-
-#### `create_task`
-
-Creates a task with validation (delegation checks, source validation).
-
-```typescript
-// Core: tasksCore.create (validation + persist)
-```
-
-#### `transition_task`
-
-Advances a task's status per the state machine.
-
-```typescript
-// Core: tasksCore.transition (validation + persist)
-```
-
-#### `delegate_task`
-
-Creates a delegation action (proposed email + task update).
-
-```typescript
-// Core: actionsCore.create (propose delegation action)
-```
-
----
-
-### Action Tools {#action-tools}
-
-#### `propose_action`
-
-Creates a proposed action for user approval.
-
-```typescript
-// Core: actionsCore.create (persist proposal)
-```
-
-#### `execute_approved_action`
-
-Executes an approved action via the appropriate connector, then marks as executed/failed in core.
-
-```typescript
-import { emailClient } from '../../connectors';
-import { calendarClient } from '../../connectors';
-import { driveClient } from '../../connectors';
-import * as actionsCore from '../../core/actions';
-
-async function executeApprovedAction(db: DB, actionId: string): Promise<Action> {
-  const action = await actionsCore.getById(db, actionId);
-
-  // Dispatch to connector based on operation
-  try {
-    const result = await dispatchToConnector(action);
-    return await actionsCore.markExecuted(db, actionId, result);
-  } catch (err) {
-    await actionsCore.markFailed(db, actionId, err.message);
-    throw err;
-  }
-}
-
-function dispatchToConnector(action: Action): Promise<Record<string, unknown>> {
-  switch (action.operation) {
-    case 'email.send':
-    case 'email.draft_reply':
-    case 'email.draft_new':
-      return emailClient.sendEmail(action.input as SendEmailParams);
-
-    case 'calendar.create_event':
-      return calendarClient.createEvent(action.input as CreateEventParams);
-
-    case 'calendar.update_event':
-      return calendarClient.updateEvent(
-        action.input.eventId as string,
-        action.input as UpdateEventParams
-      );
-
-    case 'calendar.cancel_event':
-      return calendarClient.cancelEvent(action.input.eventId as string).then(() => ({}));
-
-    case 'doc.create':
-      return driveClient.createDocument(action.input as CreateDocParams);
-
-    default:
-      throw new ValidationError(`Unknown operation: ${action.operation}`);
-  }
-}
-```
-
-This dispatch table was previously in `core/actions.ts`. Moving it to the tool layer keeps core pure and puts connector access where it belongs.
-
----
-
-### People Tools
-
-#### `propose_person`
-
-Proposes a new contact discovered in threads or events.
-
-```typescript
-// Core: peopleCore.create(db, data, 'agent') (validation + persist as proposed)
-```
-
-#### `lookup_person`
-
-Looks up a person by email, including soft-deleted records.
-
-```typescript
-// Core: peopleDb (via core) — returns person if found
-```
-
-#### `resolve_participant`
-
-Resolves a participant by ID, with Calendar API fallback for soft-deleted people.
-
-```typescript
-// Core: eventsCore.resolveParticipant (DB lookup)
-// Connector: calendarClient.getEvent (fallback for soft-deleted)
-```
-
----
-
-### Read Tools
-
-Read-only tools for giving the agent context. These call connectors directly since they don't mutate state.
-
-#### `read_thread`
-
-Reads full thread content from Gmail.
-
-```typescript
-// Connector: emailClient.readThread (external read, no persistence needed)
-```
-
-#### `read_event`
-
-Gets event details from DB.
-
-```typescript
-// Core: eventsCore.getById (DB read)
-```
-
-#### `read_document`
-
-Reads document content from Google Drive.
-
-```typescript
-// Connector: driveClient.getDocument (external read)
-```
-
-#### `search_documents`
-
-Searches Google Drive for relevant documents.
-
-```typescript
-// Connector: driveClient.searchDocuments (external read)
-```
-
----
-
-### Briefing Tools
-
-#### `assemble_briefing`
-
-Gathers data from multiple core modules and persists the briefing.
-
-```typescript
-// Core: tasksCore.list, eventsCore.list, actionsCore.list, threadsCore.list (reads)
-// Core: briefingsCore.save (persist)
-```
+| Tool | Service Method | What It Does |
+|---|---|---|
+| `assemble_briefing` | `briefingsService.save` | Persist briefing |
 
 ---
 
@@ -476,7 +321,7 @@ import { Agent } from '@anthropic-ai/agent-sdk';
 import { client } from '../client';
 import { threadTools } from '../tools/thread-tools';
 import { readTools } from '../tools/read-tools';
-import * as bucketsCore from '../../core/buckets';
+import * as bucketsService from '../../services/buckets';
 
 const SYSTEM_PROMPT = `You are sorting an email inbox. For each thread:
 1. Read the thread content
@@ -486,7 +331,7 @@ const SYSTEM_PROMPT = `You are sorting an email inbox. For each thread:
 Available buckets will be provided. Classify every thread — do not skip any.`;
 
 export async function run(db: DB, params?: { threadIds?: string[] }): Promise<void> {
-  const buckets = await bucketsCore.list(db);
+  const buckets = await bucketsService.list(db);
 
   const agent = new Agent({
     model: 'claude-sonnet-4-6',
@@ -494,7 +339,6 @@ export async function run(db: DB, params?: { threadIds?: string[] }): Promise<vo
     tools: [...threadTools, ...readTools],
   });
 
-  // Run with the thread list as the initial message
   await agent.run([{
     role: 'user',
     content: formatThreadsForClassification(params?.threadIds),
@@ -515,12 +359,12 @@ export async function run(db: DB, params?: { threadIds?: string[] }): Promise<vo
 
 ### Skills vs Direct Tool Calls
 
-The orchestrator can use tools directly (in response to ad-hoc user chat) or run skills (for structured workflows). The distinction:
+The orchestrator can use tools directly (in response to ad-hoc user chat) or run skills (for structured workflows):
 
 - **Direct tool call:** User says "check my email" → agent calls `fetch_inbox` tool
 - **Skill:** User hits "Start Day" → route calls `orchestrator.runSkill('daily-briefing')` → skill creates focused agent with specific prompt + tool subset
 
-Skills exist because some workflows need a specific prompt, a specific tool subset, and a specific sequence to produce reliable results. The agent could theoretically do it ad-hoc, but skills encode the "right way" to do common workflows.
+Skills encode the "right way" to do common workflows. The agent could do it ad-hoc, but skills produce more reliable results via focused prompts and constrained tool sets.
 
 ---
 
@@ -534,7 +378,7 @@ Skills exist because some workflows need a specific prompt, a specific tool subs
 3. orchestrator adds message to history, creates Agent with all tools
 4. Agent SDK streams response:
    - Text chunks → WebSocket broadcast (conversation:chunk)
-   - Tool calls → orchestrator executes tool handler → result returned to agent
+   - Tool calls → orchestrator executes tool handler (which calls service) → result returned to agent
    - Tool side effects → WebSocket broadcast (action:proposed, task:created, etc.)
 5. Stream ends → WebSocket broadcast (conversation:complete)
 6. Route returns 202 Accepted (response delivered via WebSocket)
@@ -548,7 +392,7 @@ Skills exist because some workflows need a specific prompt, a specific tool subs
 3. Skill creates ephemeral agent with focused prompt + tool subset
 4. Ephemeral agent runs tools in guided sequence:
    - fetch_inbox → sync_calendar → prep upcoming meetings → assemble_briefing
-5. Each tool call may produce WebSocket events (new threads, briefs, etc.)
+5. Each tool call invokes a service method, which may produce WebSocket events
 6. Skill completes → briefing ready event
 7. Route returns 202 Accepted
 ```
@@ -557,11 +401,10 @@ Skills exist because some workflows need a specific prompt, a specific tool subs
 
 ```
 1. Cron fires every 5 minutes
-2. heartbeat.ts calls tools directly (fetchInbox, syncCalendar) for data sync
-3. heartbeat.ts calls core directly (flagOverdue, expireStale) for pure logic
-4. heartbeat.ts calls skills (classifyNewThreads, detectCompletions) for LLM analysis
-5. Each step independent — failures logged, don't block next step
-6. WebSocket events broadcast for any state changes
+2. heartbeat.ts calls services directly for data sync + business logic
+3. heartbeat.ts calls skills for LLM analysis
+4. Each step independent — failures logged, don't block next step
+5. WebSocket events broadcast for any state changes
 ```
 
 ---
@@ -570,12 +413,11 @@ Skills exist because some workflows need a specific prompt, a specific tool subs
 
 | Scenario | Handling |
 |---|---|
-| Tool function throws `NotFoundError` | Return error context to agent — agent explains to user |
-| Tool function throws `ValidationError` | Return error context to agent — agent explains constraint |
-| Tool function throws `ExternalServiceError` | Return error context to agent — agent reports service issue |
-| Connector times out / rate limited | Rate limiter retries. If exhausted, tool wraps as `ExternalServiceError` |
+| Tool's service call throws `NotFoundError` | Return error context to agent — agent explains to user |
+| Tool's service call throws `ValidationError` | Return error context to agent — agent explains constraint |
+| Tool's service call throws `ExternalServiceError` | Return error context to agent — agent reports service issue |
 | Agent SDK error (model overloaded, etc.) | Orchestrator catches, broadcasts `system:error` via WebSocket |
-| Skill fails mid-workflow | Partial results already persisted via tools. Failure logged. User notified via WebSocket |
+| Skill fails mid-workflow | Partial results already persisted via service calls. Failure logged. User notified via WebSocket |
 
 The agent never sees raw stack traces. Tool handlers catch domain exceptions and return structured error objects that the agent can reason about and present to the user.
 
@@ -585,12 +427,9 @@ The agent never sees raw stack traces. Tool handlers catch domain exceptions and
 
 | Layer | Test approach | Mocking |
 |---|---|---|
-| `agents/tools/` | Unit tests per tool | Mock connectors (module mock), real or in-memory DB for core |
+| `agents/tools/` | Unit tests per tool | Mock services |
 | `agents/skills/` | Integration tests per skill | Mock Agent SDK responses, mock tools |
 | `agents/orchestrator.ts` | Integration test for chat flow | Mock Agent SDK, mock skills |
 | `agents/client.ts` | Not tested directly | — |
 
-Tools are the most important layer to test because they handle the connector→core composition. Each tool test verifies:
-1. Connector is called with correct params
-2. Core is called with the connector's response
-3. Errors from either layer are handled correctly
+Tools are trivially testable since they're thin wrappers — you're really testing that the right service method is called with the right args. The real logic lives in services, which have their own tests.
