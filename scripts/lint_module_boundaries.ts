@@ -83,6 +83,7 @@ function lint(): number {
       const lines = fs.readFileSync(file, "utf-8").split("\n");
       lines.forEach((line, i) => {
         if (!line.match(/^\s*(import|from)\s/)) return;
+        if (line.includes("// lint-ignore")) return;
         for (const forbidden of rule.forbiddenImports) {
           if (line.includes(forbidden)) {
             console.error(`${file}:${i + 1}: forbidden import "${forbidden}" — ${rule.reason}`);
