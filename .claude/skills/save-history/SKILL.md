@@ -10,53 +10,37 @@ Save conversation summary for context in future sessions.
 
 **When to use:** At ~70% context usage, before starting a new chat.
 
-## Session Types
-
-| Type | Folder | Use Case |
-|------|--------|----------|
-| `sessions/` | `specs/{issue}/sessions/` | Implementation work, spec-driven development |
-| `qa_debug_sessions/` | `specs/{issue}/qa_debug_sessions/` | QA testing, debugging, manual testing sessions |
-
-**How to choose:**
-- Use `sessions/` for normal implementation work following requirements/design/tasks
-- Use `qa_debug_sessions/` for debugging sessions, QA testing, production issues
-
 ## Workflow
 
-### Step 1: Identify Current Issue and Session Type
+### Step 1: Identify Current Phase
 
-1. Check current git branch:
+1. Determine which implementation phase is active based on the work done this session
+   - Phase numbers match `implementation_phases/phase{N}/`
+   - If unsure, check recent files changed or ask
+
+2. Create the sessions directory if needed:
    ```bash
-   git branch --show-current
+   mkdir -p implementation_phases/phase{N}/sessions/
    ```
-
-2. Find matching `specs/{branch-name}/` folder
-   - If exists, use that folder
-   - If no match, use `specs/_general/`
-
-3. Determine session type:
-   - If argument contains `qa_debug` → use `qa_debug_sessions/`
-   - If session was QA/debugging focused → use `qa_debug_sessions/`
-   - Otherwise → use `sessions/`
 
 ### Step 2: Determine Session Number
 
 ```bash
-ls specs/{issue}/{session_type}/ 2>/dev/null | tail -1
+ls implementation_phases/phase{N}/sessions/ 2>/dev/null | tail -1
 ```
 
 Next session = highest number + 1 (start at 001)
 
 ### Step 3: Create Session File
 
-Create `specs/{issue}/{session_type}/{NNN}_{summary}.md`:
+Create `implementation_phases/phase{N}/sessions/{NNN}_{summary}.md`:
 
 - `{NNN}` = session number (001, 002, 003...)
 - `{summary}` = 3-5 word description (lowercase, hyphens)
 
 Examples:
-- `specs/add-bucket-templates/sessions/002_implement-rest-endpoints.md`
-- `specs/fix-websocket-reconnect/qa_debug_sessions/001_connection-timeout-fixes.md`
+- `implementation_phases/phase1/sessions/001_scaffolding-and-configs.md`
+- `implementation_phases/phase2/sessions/002_query-functions-tests.md`
 
 ### Step 4: Write Summary
 
@@ -64,7 +48,7 @@ Examples:
 # Session: {Brief Summary}
 
 **Date:** YYYY-MM-DD
-**Branch:** {branch-name}
+**Phase:** {N} — {Phase Name}
 
 ## Summary
 
@@ -107,8 +91,9 @@ Examples:
 
 ## Loading Context in Future Sessions
 
-At start of new session on same issue:
+At start of new session on same phase:
 
-1. Read latest session file in `specs/{issue}/sessions/`
-2. Read `specs/{issue}/requirements.md`, `design.md`, `tasks.md` if they exist
-3. Continue work with full context
+1. Read latest session file in `implementation_phases/phase{N}/sessions/`
+2. Read `implementation_phases/phase{N}/completion_report.md` if it exists
+3. Read `project/implementation_plan.md` for the phase's task list
+4. Continue work with full context

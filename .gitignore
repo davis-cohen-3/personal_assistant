@@ -1,0 +1,22 @@
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Logs
+logs/
+
+# Editor
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# SDK session files (may contain PII)
+.claude-session/
+*.session.json
