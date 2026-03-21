@@ -4,6 +4,10 @@
 
 The backend is a Node.js server that serves three callers: the frontend (via HTTP/WebSocket), the agent system (via orchestrator tools), and the heartbeat (via cron). All three flow through a shared business logic layer.
 
+### Guiding Principle
+
+**Core is pure.** It handles validation, state machines, transactions, and DB persistence. It never reaches out to external services (Gmail, Calendar, Drive) or LLMs. Agent tools are the integration point that composes connector reads with core writes. This separation makes core testable with just a DB handle and keeps orchestration logic in the agent layer where it belongs.
+
 ---
 
 ## Layers
@@ -11,10 +15,10 @@ The backend is a Node.js server that serves three callers: the frontend (via HTT
 | Layer | Location | Responsibility |
 |---|---|---|
 | Routes | `routes/` | Hono handlers. Parse request, call core, return response. |
-| Core | `core/` | Business logic. Transactions, validation, state machines, orchestration. |
+| Core | `core/` | Pure business logic. Transactions, validation, state machines. No external API calls. |
 | DB | `db/` | Drizzle query functions. Receives `db \| tx`, returns typed data. No business logic. |
 | Connectors | `connectors/` | External API adapters: Gmail, Calendar, Drive. Interface-based. |
-| Agents | `agents/` | Claude Agent SDK orchestrator + subagents. Call core, not db. |
+| Agents | `agents/` | Claude Agent SDK orchestrator, tools, and skills. Tools compose connector reads + core writes. Skills orchestrate multi-step workflows via tools. See [agents_layer.md](agents_layer.md). |
 | Auth | `auth/` | Google OAuth flow, token refresh, route middleware. |
 | Middleware | `middleware/` | Hono middleware: request ID, request logging, CORS. Runs before route handlers. |
 | Infra | `infra/` | Cross-cutting infrastructure: logging, WebSocket management. Imported by any layer. |
@@ -22,20 +26,21 @@ The backend is a Node.js server that serves three callers: the frontend (via HTT
 ### Data Flow
 
 ```
-User (HTTP)     →  routes/     →  core/  →  db/
-                                          →  connectors/
+User (HTTP)     →  routes/      →  core/         →  db/
 
-User (chat/     →  routes/     →  agents/  →  core/  →  db/
- async ops)        agent.ts                           →  connectors/
+User (chat/     →  routes/      →  agents/
+ async ops)        agent.ts        orchestrator   →  tools/  →  core/  →  db/
+                                                             →  connectors/
 
-Agent (tools)   →  agents/     →  core/  →  db/
-                                          →  connectors/
+Agent (tools)   →  agents/      →  tools/  →  core/  →  db/
+                   orchestrator              →  connectors/
 
-Heartbeat       →  cron job    →  agents/  →  core/  →  db/
-                                                      →  connectors/
+Heartbeat       →  cron job     →  core/ (pure data ops: flagOverdue, expireStale)
+                                →  tools/ (external data: fetchInbox, syncCalendar)
+                                →  skills/ (LLM ops: classify, detect completions)
 ```
 
-`core/` is the single point of business logic regardless of caller. Core handles data operations only — no LLM calls, no classification, no message drafting. Agent-driven workflows (sort inbox, prep meeting, briefing generation) flow through `agents/` which calls `core/` for persistence.
+**Core never calls connectors.** Core is the single point of business logic: validation, state machines, transactions, persistence. It receives data and processes it. Agent tools are the integration layer that fetches external data via connectors and persists it via core. Agent-driven workflows (sort inbox, prep meeting, briefing generation) flow through skills, which orchestrate tools, which compose connector reads with core writes.
 
 ---
 
@@ -78,9 +83,19 @@ packages/backend/src/
     google-calendar.ts       ← Implements CalendarClient
     google-drive.ts          ← Implements DriveClient
     rate-limiter.ts          ← Shared rate limiting + retry
-  agents/                    ← Agent SDK orchestrator + subagents
-    orchestrator.ts
-    skills/
+  agents/                    ← Agent SDK orchestrator, tools, and skills
+    client.ts                ← Claude Agent SDK client initialization
+    orchestrator.ts          ← Conversation management, streaming, skill dispatch
+    tools/                   ← Tool definitions (bridge between agent and system)
+      index.ts               ← Tool registry — all tools registered here
+      thread-tools.ts        ← fetchInbox, classifyThread, investigateThread
+      event-tools.ts         ← syncCalendar, prepMeeting, postMeeting
+      task-tools.ts          ← createTask, delegateTask, detectCompletions
+      action-tools.ts        ← proposeAction, executeApprovedAction
+      people-tools.ts        ← proposePerson, lookupPerson
+      briefing-tools.ts      ← assembleBriefing
+      read-tools.ts          ← readThread, readEvent, readDocument, searchDocuments
+    skills/                  ← Pre-composed workflows (system prompts + tool sequences)
       sort-inbox.ts
       investigate-thread.ts
       prep-meeting.ts
@@ -112,7 +127,7 @@ packages/backend/src/
 | Error handling | Domain exceptions in `core/`, mapped to HTTP in `routes/` | `db/` lets errors bubble. `core/` wraps into domain errors. `routes/` maps to status codes. |
 | Query return types | Drizzle `$inferSelect` / `$inferInsert`, re-exported from `shared/` | Single source of truth. Type-only dependency — no Drizzle runtime in frontend. |
 | Soft delete (People) | Wrapper in `db/people.ts` | Default excludes deleted. Explicit `IncludeDeleted` variant for re-proposal prevention. |
-| Connectors | Singleton interface/adapter pattern | Module-level singletons. Any layer imports directly. Testable via module mocking. |
+| Connectors | Singleton interface/adapter pattern | Module-level singletons. Imported by agent tools only (not by core). Types shared via `shared/`. Testable via module mocking. |
 | Rate limiting | Shared wrapper in `connectors/` | Google APIs share per-user quota. One rate limiter, consistent retry, partial failure support. |
 | Drizzle containment | `drizzle-orm` imports allowed **only** in `db/` and `shared/types/` | `db/` is the repository layer. If `core/` or `routes/` import Drizzle query primitives (`eq`, `and`, `sql`, etc.), the boundary is broken. Enforced by ESLint. |
 
@@ -124,13 +139,21 @@ Hard boundaries enforced by ESLint `no-restricted-imports`:
 
 | Layer | May import from | Must NOT import from |
 |---|---|---|
-| `routes/` | `core/`, `agents/` (agent.ts only), `infra/`, `db/schema` (types only), `shared/` | `db/` query functions, `drizzle-orm`, `connectors/` |
-| `core/` | `db/`, `connectors/`, `infra/`, `shared/` | `drizzle-orm`, `agents/`, `routes/` |
-| `db/` | `drizzle-orm`, `infra/`, `db/schema`, `shared/` | `core/`, `routes/`, `connectors/` |
-| `agents/` | `core/`, `connectors/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `routes/` |
+| `routes/` | `core/`, `agents/orchestrator` (chat endpoint only), `infra/`, `db/schema` (types only), `shared/` | `db/` query functions, `drizzle-orm`, `connectors/`, `agents/tools/`, `agents/skills/` |
+| `core/` | `db/`, `infra/`, `shared/` | `connectors/`, `agents/`, `routes/`, `drizzle-orm` |
+| `db/` | `drizzle-orm`, `infra/`, `db/schema`, `shared/` | `core/`, `routes/`, `connectors/`, `agents/` |
+| `agents/tools/` | `core/`, `connectors/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `routes/` |
+| `agents/skills/` | `agents/tools/`, `core/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `connectors/`, `routes/` |
+| `agents/orchestrator` | `agents/skills/`, `agents/tools/`, `core/`, `infra/`, `shared/` | `db/`, `drizzle-orm`, `connectors/`, `routes/` |
 | `middleware/` | `infra/`, `auth/`, `shared/` | `core/`, `db/`, `connectors/`, `agents/` |
 | `connectors/` | `infra/`, `shared/` | `core/`, `db/`, `routes/`, `agents/` |
-| `infra/` | `shared/` | `core/`, `db/`, `routes/`, `agents/`, `connectors/` |
+| `infra/` | `shared/` | Everything else |
+
+**Key constraints:**
+- **Core never imports connectors.** Core is pure business logic + DB. No external API calls.
+- **Skills never import connectors.** Skills orchestrate tools. Tools handle the connector↔core composition.
+- **Tools are the only agent-layer code that touches connectors.** This keeps the connector access explicit and centralized.
+- **Nobody except routes imports the orchestrator.** The orchestrator is the entry point for agent conversations.
 
 ### ESLint Config (to add at project init)
 
@@ -143,22 +166,29 @@ Hard boundaries enforced by ESLint `no-restricted-imports`:
   rules: {
     'no-restricted-imports': ['error', {
       paths: [
-        {
-          name: 'drizzle-orm',
-          message: 'Import drizzle-orm only in db/. Use db/ query functions instead.',
-        },
+        { name: 'drizzle-orm', message: 'Import drizzle-orm only in db/.' },
       ],
       patterns: [
-        {
-          group: ['drizzle-orm/*'],
-          message: 'Import drizzle-orm only in db/. Use db/ query functions instead.',
-        },
+        { group: ['drizzle-orm/*'], message: 'Import drizzle-orm only in db/.' },
       ],
     }],
   },
 },
 
-// Routes must not import db/ query functions or connectors
+// Core must not import connectors or agents (core is pure)
+{
+  files: ['src/core/**/*.ts'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [
+        { group: ['../connectors/*'], message: 'Core is pure. Use agents/tools/ to compose connector + core calls.' },
+        { group: ['../agents/*'], message: 'Core must not import agents.' },
+      ],
+    }],
+  },
+},
+
+// Routes must not import db/ query functions, connectors, or agent internals
 {
   files: ['src/routes/**/*.ts'],
   rules: {
@@ -166,6 +196,20 @@ Hard boundaries enforced by ESLint `no-restricted-imports`:
       patterns: [
         { group: ['../db/*', '!../db/schema'], message: 'Routes call core/, not db/ directly.' },
         { group: ['../connectors/*'], message: 'Routes call core/, not connectors/ directly.' },
+        { group: ['../agents/tools/*', '../agents/skills/*'], message: 'Routes use agents/orchestrator, not tools/skills directly.' },
+      ],
+    }],
+  },
+},
+
+// Skills must not import connectors (they orchestrate tools, which handle connectors)
+{
+  files: ['src/agents/skills/**/*.ts'],
+  rules: {
+    'no-restricted-imports': ['error', {
+      patterns: [
+        { group: ['../../connectors/*'], message: 'Skills orchestrate tools. Tools handle connector calls.' },
+        { group: ['../../db/*'], message: 'Skills use tools or core, not db directly.' },
       ],
     }],
   },
@@ -244,29 +288,27 @@ export async function applyInvestigationPlan(
 
 ### Side-Effect Actions (Split Transaction)
 
-When an action involves an external API call (sending email, creating calendar event), the transaction splits around the external call:
+When an action involves an external API call (sending email, creating calendar event), the flow splits across core and tools:
 
 ```typescript
-// core/actions.ts
-export async function executeAction(db: DB, actionId: string) {
-  // Step 1: Mark approved
-  await actionsDb.transition(db, actionId, 'approved');
+// agents/tools/action-tools.ts — executeApprovedAction
+// Step 1: Core marks approved (DB write)
+const action = await actionsCore.approve(db, actionId);
 
-  // Step 2: Execute external side effect (outside transaction)
-  try {
-    const result = await executeExternalOperation(action);
+// Step 2: Tool executes via connector (external side effect)
+try {
+  const result = await dispatchToConnector(action);
 
-    // Step 3: Mark executed
-    await actionsDb.markExecuted(db, actionId, result);
-  } catch (err) {
-    // Step 3 (failure): Mark failed
-    await actionsDb.markFailed(db, actionId, err.message);
-    throw new ExternalServiceError(err.message);
-  }
+  // Step 3a: Core marks executed (DB write)
+  await actionsCore.markExecuted(db, actionId, result);
+} catch (err) {
+  // Step 3b: Core marks failed (DB write)
+  await actionsCore.markFailed(db, actionId, err.message);
+  throw err;
 }
 ```
 
-If step 2 succeeds but step 3 fails (DB down), the action stays `approved`. The heartbeat detects this and retries the status update. No inconsistent state.
+Core handles the lifecycle (approve, markExecuted, markFailed). The tool handles the external dispatch. If step 2 succeeds but step 3a fails (DB down), the action stays `approved`. The heartbeat detects this and retries. See [agents_layer.md](agents_layer.md#action-tools) for the dispatch implementation.
 
 ---
 
@@ -487,7 +529,7 @@ export interface DriveClient {
 
 ### Singleton Pattern
 
-Connectors are module-level singletons, initialized once at app startup. Any layer that needs a connector imports it directly — no parameter passing.
+Connectors are module-level singletons, initialized once at app startup. **Only agent tools import connector singletons** — core never touches them. This keeps core pure and testable. Connector param/response types are shared via `shared/types/` so core can work with the data shapes without importing the clients.
 
 ```typescript
 // connectors/gmail.ts
