@@ -68,6 +68,26 @@ In local dev, the Agent SDK writes session files (`.jsonl`) that may contain pla
 
 **Fix:** Add `~/.claude/projects/` to `.gitignore`. Document cleanup procedure for local dev.
 
+### IMP-020: HTML-only emails have empty bodyText — must strip HTML in email.ts
+
+**Confirmed in Phase 5 smoke test:** HTML-only emails are common (all promotional/marketing mail). Gmail's `GmailMessage.bodyText` is `""` for these, with content only in `bodyHtml`. The schema stores only `body_text` (no `body_html` column) — so syncing without handling this stores empty strings, leaving the agent nothing to classify or summarize.
+
+**Fix:** In `email.ts`, add a `extractBodyText(msg: GmailMessage): string` helper that returns `bodyText` when non-empty, and strips HTML from `bodyHtml` as a fallback. Tag stripping is sufficient for the 2000-char classification use case. Apply this before passing messages to `upsertEmailMessages`.
+
+```typescript
+function extractBodyText(msg: GmailMessage): string {
+  if (msg.bodyText) return msg.bodyText;
+  return msg.bodyHtml
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+```
+
+**Where:** `src/server/email.ts` — preprocessing step when building messages for `upsertEmailMessages`
+
 ### IMP-014: syncInbox snippet comparison may not work (FEAS-008)
 
 `syncInbox` diffs local vs Gmail using `snippet` comparison. Gmail `threads.list` may not return `snippet` in all cases. If it doesn't, fall back to always fetching changed threads (slightly less efficient but correct). History ID-based incremental sync is the proper fix — deferred to v2.

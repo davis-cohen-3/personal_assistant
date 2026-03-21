@@ -601,6 +601,21 @@ const DEFAULT_SYNC_LIMIT = 200;
 const limit = pLimit(5);
 
 /**
+ * HTML-only emails (promotional/marketing) have bodyText === "" with all content in bodyHtml.
+ * Strip HTML as fallback so body_text is never empty when the message has content.
+ * IMP-020: confirmed via Phase 5 smoke test.
+ */
+function extractBodyText(msg: GmailMessage): string {
+  if (msg.bodyText) return msg.bodyText;
+  return msg.bodyHtml
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Bulk inbox refresh. Fetches recent thread IDs from Gmail, diffs against
  * local DB, only fetches full content for new or changed threads.
  * Returns stats only — use get_unbucketed to process results.
@@ -628,7 +643,8 @@ export async function syncInbox(maxResults?: number): Promise<{ new: number; upd
     const isNew = !local;
     const full = await gmail.getThread(thread.id);
     await queries.upsertEmailThread(full);
-    await queries.upsertEmailMessages(full.messages);
+    // extractBodyText: fall back to stripped HTML for HTML-only emails (IMP-020)
+    await queries.upsertEmailMessages(full.messages.map(m => ({ ...m, bodyText: extractBodyText(m) })));
     isNew ? newCount++ : updatedCount++;
   })));
 
@@ -648,7 +664,7 @@ export async function search(query: string, maxResults?: number) {
   await Promise.all(gmailThreads.map(thread => limit(async () => {
     const full = await gmail.getThread(thread.id);
     await queries.upsertEmailThread(full);
-    await queries.upsertEmailMessages(full.messages);
+    await queries.upsertEmailMessages(full.messages.map(m => ({ ...m, bodyText: extractBodyText(m) })));
   })));
 
   // Return from DB (consistent shape, includes local-only fields)

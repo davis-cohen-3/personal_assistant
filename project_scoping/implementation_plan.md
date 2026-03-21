@@ -256,7 +256,7 @@ The most complex service-layer code, tested in isolation before wiring it into t
 
 **Create:**
 - `src/server/email.ts` — all functions from `04_backend.md` (Email Orchestration Layer section):
-  - `syncInbox(maxResults?)` — parallel fetching with `pLimit(5)`, diff-based. Note: snippet comparison may not work in all cases (IMP-014) — fall back to always fetching changed threads if needed.
+  - `syncInbox(maxResults?)` — parallel fetching with `pLimit(5)`, diff-based. Note: snippet comparison may not work in all cases (IMP-014) — fall back to always fetching changed threads if needed. Add `extractBodyText(msg)` helper that returns `msg.bodyText` when non-empty and strips HTML from `msg.bodyHtml` as fallback — HTML-only emails (all promotional mail) have empty `bodyText` (IMP-020, confirmed Phase 5 smoke test). Apply to all `upsertEmailMessages` calls.
   - `search(query, maxResults?)` — uses same `pLimit(5)` concurrency pool as `syncInbox` (not a sequential for loop)
   - `getThread(gmailThreadId)`
   - `getUnbucketedThreads()`

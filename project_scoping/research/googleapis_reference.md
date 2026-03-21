@@ -203,11 +203,11 @@ msg.setRecipient('recipient@example.com');
 msg.setSubject('Hello');
 msg.addMessage({ contentType: 'text/plain', data: 'Message body' });
 
-const raw = msg.asRaw();  // Returns base64url-encoded RFC 2822 string
-
+// asRaw() returns the raw RFC 2822 MIME string (not encoded)
+// asEncoded() returns the base64url-encoded version — use this for Gmail API
 await gmail.users.messages.send({
   userId: 'me',
-  requestBody: { raw }
+  requestBody: { raw: msg.asEncoded() }
 });
 ```
 
@@ -227,7 +227,7 @@ msg.addMessage({ contentType: 'text/plain', data: 'Reply body' });
 await gmail.users.messages.send({
   userId: 'me',
   requestBody: {
-    raw: msg.asRaw(),
+    raw: msg.asEncoded(),
     threadId: originalThreadId  // Groups into same thread
   }
 });
@@ -242,10 +242,37 @@ const msg = createMimeMessage();
 await gmail.users.drafts.create({
   userId: 'me',
   requestBody: {
-    message: { raw: msg.asRaw(), threadId: optionalThreadId }
+    message: { raw: msg.asEncoded(), threadId: optionalThreadId }
   }
 });
 ```
+
+### Attachments
+
+Use `addAttachment()`. Data must be a base64-encoded string:
+
+```typescript
+msg.addAttachment({
+  filename: 'report.pdf',
+  contentType: 'application/pdf',
+  data: Buffer.from(fileBytes).toString('base64'),  // base64, not base64url
+});
+```
+
+Inline attachments (for HTML embedding):
+
+```typescript
+msg.addAttachment({
+  inline: true,
+  filename: 'logo.png',
+  contentType: 'image/png',
+  data: base64Data,
+  headers: { 'Content-ID': 'logo' },
+});
+// Reference in HTML body: <img src="cid:logo">
+```
+
+**Note:** `asRaw()` returns raw RFC 2822 MIME text. Always use `asEncoded()` for the Gmail API `raw` field — it returns the base64url-encoded version that the API expects.
 
 ### messages.modify — Labels
 
