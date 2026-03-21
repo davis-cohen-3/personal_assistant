@@ -232,57 +232,52 @@ Returns the meeting brief for an event. Throws `NotFoundError` if event not foun
 
 Creates or updates an event record from Google Calendar API data. Matches on `google_event_id`. Resolves participant emails to People IDs via `peopleDb.findByEmail`. Unresolved participants are stored by email for later resolution.
 
-#### `prepMeeting(db: DB, id: string, emailClient: EmailClient, calendarClient: CalendarClient, driveClient: DriveClient): Promise<{ jobId: string }>`
+#### `syncFromCalendar(db: DB, timeRange: { from: Date, to: Date }): Promise<Event[]>`
 
-Entry point for the Prep Meeting skill. Returns a job ID — results arrive via WebSocket.
+Fetches events from Google Calendar for the given range and upserts them. Used by heartbeat and Start Day.
 
-Orchestrates:
-1. Reads event details via `calendarClient.getEvent`.
-2. Looks up participants in People.
-3. Searches related threads via `emailClient.searchThreads` (by participant emails and event topic).
-4. Searches related documents via `driveClient.searchDocuments`.
-5. Generates pre-metadata.
-6. Builds and saves the meeting brief.
+- **Connector usage:** Imports `calendarClient` singleton, calls `listEvents`. Non-transactional — each event is independent.
 
-- **Connector usage:** Calls `CalendarClient.getEvent`, `EmailClient.searchThreads`, `DriveClient.searchDocuments`. Each call is independent — partial failure is acceptable (brief is generated with available data, missing sections noted).
+#### `saveBrief(db: DB, id: string, brief: EventBrief, preMetadata: PreMetadata): Promise<Event>`
 
-#### `processPostMeeting(db: DB, id: string, emailClient: EmailClient, driveClient: DriveClient): Promise<PostMeetingResult>`
+Saves an agent-generated meeting brief and pre-metadata to an event. Called by the agent's Prep Meeting skill after LLM brief generation.
 
-Runs post-meeting processing for an ended event. **Transactional** — updates event + creates tasks + creates actions atomically (per [backend_architecture.md](backend_architecture.md#transaction-boundaries)).
+#### `applyPostMeetingPlan(db: DB, id: string, plan: PostMeetingPlan): Promise<void>`
 
-1. Checks for follow-up threads involving meeting participants.
-2. Checks for new/updated documents (meeting notes, action items).
-3. Extracts action items → proposes as Tasks.
-4. Populates `post_metadata` on event record.
+Persists post-meeting processing results. **Transactional** — updates event + creates tasks + creates actions atomically.
 
 ```typescript
 await db.transaction(async (tx) => {
-  await eventsDb.updatePostMetadata(tx, id, postMetadata);
-  for (const task of extractedTasks) {
+  await eventsDb.updatePostMetadata(tx, id, plan.postMetadata);
+  for (const task of plan.extractedTasks) {
     await taskCore.create(tx, task, 'agent');
   }
-  for (const action of proposedActions) {
+  for (const action of plan.proposedActions) {
     await actionCore.create(tx, action);
   }
 });
 ```
 
-- **Connector usage:** Calls `EmailClient.searchThreads` and `DriveClient.searchDocuments`. Wraps failures in `ExternalServiceError`.
+The agent (in `agents/skills/post-meeting.ts`) checks for follow-up threads, new documents, and extracts action items via LLM, then passes the `PostMeetingPlan` here for persistence.
 
-#### `syncFromCalendar(db: DB, calendarClient: CalendarClient, timeRange: { from: Date, to: Date }): Promise<Event[]>`
+#### `findEndedUnprocessed(db: DB): Promise<Event[]>`
 
-Fetches events from Google Calendar for the given range and upserts them. Used by heartbeat and Start Day.
+Queries events where `end_time < now` and `post_metadata IS NULL`. Used by the heartbeat to find meetings needing post-processing.
 
-- **Connector usage:** Calls `CalendarClient.listEvents`. Non-transactional — each event is independent.
+#### `resolveParticipant(db: DB, personId: string, googleEventId: string): Promise<{ name: string, email: string }>`
 
-### Heartbeat Logic
+Resolves a participant by People ID. If the person is soft-deleted, falls back to the Google Calendar event to retrieve their name/email from the original event data.
 
-- **Detect ended meetings:** Queries events where `end_time < now` and `post_metadata IS NULL`. For each, calls `processPostMeeting`. Each event is processed independently — one failure doesn't block others.
-- **Sync calendar changes:** Calls `syncFromCalendar` to detect new/modified events.
+- **Connector usage:** Imports `calendarClient` singleton for fallback resolution.
+
+### Connector Usage
+
+- `syncFromCalendar` imports `calendarClient` singleton to fetch events.
+- `resolveParticipant` imports `calendarClient` singleton for fallback on soft-deleted people.
 
 ### Cross-Module Calls
 
-- `processPostMeeting` calls `taskCore.create` and `actionCore.create` inside its transaction.
+- `applyPostMeetingPlan` calls `taskCore.create` and `actionCore.create` inside its transaction.
 - `upsertFromCalendar` calls `peopleDb.findByEmail` (db layer, not core) to resolve participant IDs.
 
 ---
@@ -337,9 +332,9 @@ Advances task status per the state machine. Throws `ValidationError` if the tran
 
 Finds all tasks with status `in_progress` and `due_date < now`, transitions them to `overdue`. Returns the newly overdue tasks. Called by heartbeat.
 
-#### `detectCompletions(db: DB, emailClient: EmailClient): Promise<Task[]>`
+#### `getActiveForCompletionCheck(db: DB): Promise<Task[]>`
 
-Agent-driven: reviews in-progress and overdue tasks against recent thread activity to detect potential completions. For each detected completion, transitions to `complete_proposed` and creates a proposed action. Returns tasks with proposed completions. Called by heartbeat.
+Returns all tasks with status `in_progress` or `overdue` — the set the agent reviews for potential completions. The agent (in the heartbeat flow) analyzes these against recent thread activity via LLM and calls `transition` + `actionCore.create` for any detected completions.
 
 ### State Machine
 
@@ -369,12 +364,11 @@ proposed ──→ confirmed ──→ in_progress ──→ complete_proposed �
 ### Heartbeat Logic
 
 - **Flag overdue:** `flagOverdue` finds in-progress tasks past due date, transitions to `overdue`.
-- **Detect completions:** `detectCompletions` reviews active tasks against recent activity, proposes completions.
+- **Completion detection:** `getActiveForCompletionCheck` provides the task set for the agent's LLM-based completion detection (runs in `agents/`).
 
 ### Cross-Module Calls
 
-- `detectCompletions` calls `actionCore.create` to create proposed completion actions.
-- Created by `threadsCore.investigateThread` and `eventsCore.processPostMeeting` inside their transactions.
+- Created by `threadsCore.applyInvestigationPlan` and `eventsCore.applyPostMeetingPlan` inside their transactions.
 
 ---
 
@@ -498,7 +492,7 @@ All connector calls are wrapped: success → `executed`, failure → `failed` wi
 
 - `approve` may call `taskCore.transition` after executing task-related operations (e.g., after `task.complete` action is executed, transition task to `complete`).
 - `approve` may call `taskCore.update` after executing `task.delegate` (set `delegated_to`).
-- Created by `threadsCore.investigateThread`, `eventsCore.processPostMeeting`, and `taskCore.detectCompletions`.
+- Created by `threadsCore.applyInvestigationPlan`, `eventsCore.applyPostMeetingPlan`, and agent completion detection.
 
 ---
 
@@ -507,31 +501,34 @@ All connector calls are wrapped: success → `executed`, failure → `failed` wi
 `actions.approve` needs to map an action's `operation` field to the correct connector call. This is handled by a dispatch function internal to `core/actions.ts`:
 
 ```typescript
+import { emailClient } from '../connectors/gmail';
+import { calendarClient } from '../connectors/google-calendar';
+import { driveClient } from '../connectors/google-drive';
+
 async function executeExternalOperation(
   action: Action,
-  connectors: { email: EmailClient, calendar: CalendarClient, drive: DriveClient }
 ): Promise<Record<string, unknown>> {
   switch (action.operation) {
     case 'email.send':
     case 'email.draft_reply':
     case 'email.draft_new':
-      return connectors.email.sendEmail(action.input as SendEmailParams);
+      return emailClient.sendEmail(action.input as SendEmailParams);
 
     case 'calendar.create_event':
-      return connectors.calendar.createEvent(action.input as CreateEventParams);
+      return calendarClient.createEvent(action.input as CreateEventParams);
 
     case 'calendar.update_event':
-      return connectors.calendar.updateEvent(
+      return calendarClient.updateEvent(
         action.input.eventId as string,
         action.input as UpdateEventParams
       );
 
     case 'calendar.cancel_event':
-      await connectors.calendar.cancelEvent(action.input.eventId as string);
+      await calendarClient.cancelEvent(action.input.eventId as string);
       return {};
 
     case 'doc.create':
-      return connectors.drive.createDocument(action.input as CreateDocParams);
+      return driveClient.createDocument(action.input as CreateDocParams);
 
     default:
       throw new ValidationError(`Unknown operation: ${action.operation}`);
@@ -539,7 +536,81 @@ async function executeExternalOperation(
 }
 ```
 
-Connectors are injected into core functions — not imported directly. This preserves the interface-only dependency.
+Connectors are module-level singletons — imported directly.
+
+---
+
+## core/briefings.ts
+
+### Public Functions
+
+#### `getToday(db: DB): Promise<Briefing | null>`
+
+Returns today's briefing if one has been generated. Returns `null` if none exists.
+
+#### `getByDate(db: DB, date: string): Promise<Briefing | null>`
+
+Returns the briefing for a specific date.
+
+#### `save(db: DB, content: BriefingContent): Promise<Briefing>`
+
+Saves a generated briefing. Upserts on `date` — if a briefing already exists for today, it's replaced with the new one. Called by the agent's Daily Briefing skill after assembling the briefing content.
+
+The `content` JSONB stores IDs + summary strings as a snapshot. It is **not** the response shape — the route handler hydrates referenced entities from live state for the current day's briefing.
+
+#### `isGenerating(): boolean`
+
+Returns whether a briefing generation is currently in progress. Used by the route to return `409` if the user presses "Start Day" while one is already running. State is tracked via an in-memory flag (single-process, single-user).
+
+### Connector Usage
+
+None. Briefings are assembled from data already in the database.
+
+### Cross-Module Calls
+
+None. The agent calls `briefings.save` after assembling content from other core modules.
+
+---
+
+## core/preferences.ts
+
+### Overview
+
+File-based preferences that shape agent behavior. Stored in `preferences/` directory, loaded into agent context at conversation start. Not a database entity.
+
+### Public Functions
+
+#### `loadAll(): Promise<Record<string, string>>`
+
+Reads all preference files from the `preferences/` directory. Returns a map of `{ filename: content }`. Called at agent initialization to hydrate context.
+
+#### `load(category: string): Promise<string>`
+
+Reads a single preference file (e.g., `communication_style`). Throws `NotFoundError` if the file doesn't exist.
+
+#### `getProfile(): Promise<UserProfile>`
+
+Reads and parses `preferences/profile.md`. Returns structured profile data (name, email, role, company, timezone). Used by the agent for identity context.
+
+#### `update(category: string, content: string): Promise<void>`
+
+Writes a preference file. Overwrites the existing file if present. Called after user approves a preference change proposal.
+
+- **Validation:** Category must be one of the known preference categories (`profile`, `communication_style`, `scheduling`, `priority_rules`, `delegation`, `general`).
+
+#### `proposeUpdate(category: string, currentContent: string, proposedContent: string, reason: string): PreferenceUpdateProposal`
+
+Builds a preference update proposal. The agent calls this when it detects a pattern from approval/rejection history that suggests a preference change. The proposal is surfaced to the user for approval before writing.
+
+**Rule hierarchy:** User-explicit rules always take precedence over inferred rules. If the agent detects a pattern that conflicts with an explicit rule, it surfaces a proposal explaining the conflict — it never silently overrides.
+
+### Connector Usage
+
+None. Preferences are local files.
+
+### Cross-Module Calls
+
+- `actions.approve` / `actions.reject` feed into preference learning — the agent analyzes approval/rejection patterns and may call `proposeUpdate` to suggest preference changes.
 
 ---
 
@@ -562,13 +633,12 @@ Reference: [backend_architecture.md](backend_architecture.md#transaction-boundar
 | Core Function | Transactional | Reason |
 |---|---|---|
 | `buckets.remove` | Yes | Reassign threads + delete bucket atomically |
-| `threads.investigateThread` | Yes | Creates people + tasks + actions atomically |
-| `threads.resortAll` | Yes | Partial re-sort is broken state |
-| `events.processPostMeeting` | Yes | Updates event + creates tasks + actions atomically |
+| `threads.applyInvestigationPlan` | Yes | Creates people + tasks + actions atomically |
+| `events.applyPostMeetingPlan` | Yes | Updates event + creates tasks + actions atomically |
 | `people.reject` | Yes | Status change + soft delete atomically |
 | `actions.approve` | Split | External API call can't be inside DB transaction |
 | `threads.batchClassifyAndAssign` | No | Each thread independent — partial success valid |
-| `threads.sortInbox` | No | Individual thread operations are independent |
+| `threads.fetchNewThreads` | No | Individual thread upserts are independent |
 | `events.syncFromCalendar` | No | Each event independent |
 | `tasks.flagOverdue` | No | Each task independent |
 | `actions.expireStale` | No | Each action independent |
@@ -582,60 +652,67 @@ The heartbeat cron calls core functions directly. Each step is independent — o
 
 ```typescript
 // Heartbeat pseudo-code (runs in cron job)
-async function heartbeat(db: DB, connectors: Connectors) {
-  // 1. Threads: classify new emails
-  await threadsCore.sortInbox(db, connectors.email);
+async function heartbeat(db: DB) {
+  // 1. Threads: fetch new emails + classify via agent
+  const newThreads = await threadsCore.fetchNewThreads(db);
+  if (newThreads.length > 0) {
+    await agentSkills.classifyThreads(db, newThreads);  // agents/ — LLM classification
+  }
 
-  // 2. Events: sync calendar changes
-  await eventsCore.syncFromCalendar(db, connectors.calendar, todayRange());
+  // 2. Events: sync calendar changes (pure data — no LLM)
+  await eventsCore.syncFromCalendar(db, todayRange());
 
-  // 3. Events: process ended meetings
-  const endedEvents = await eventsDb.findEndedUnprocessed(db);
+  // 3. Events: process ended meetings via agent
+  const endedEvents = await eventsCore.findEndedUnprocessed(db);
   for (const event of endedEvents) {
-    await eventsCore.processPostMeeting(db, event.id, connectors.email, connectors.drive)
+    await agentSkills.postMeeting(db, event.id)
       .catch(err => logger.error({ err, eventId: event.id }, 'post-meeting failed'));
   }
 
-  // 4. Tasks: flag overdue
+  // 4. Tasks: flag overdue (pure data — no LLM)
   await tasksCore.flagOverdue(db);
 
-  // 5. Tasks: detect completions
-  await tasksCore.detectCompletions(db, connectors.email);
+  // 5. Tasks: detect completions via agent
+  const activeTasks = await tasksCore.getActiveForCompletionCheck(db);
+  if (activeTasks.length > 0) {
+    await agentSkills.detectCompletions(db, activeTasks);  // agents/ — LLM analysis
+  }
 
-  // 6. Actions: expire stale proposals
+  // 6. Actions: expire stale proposals (pure data — no LLM)
   await actionsCore.expireStale(db, { hours: 24 });
 
-  // 7. Actions: retry stuck approvals
+  // 7. Actions: retry stuck approvals (pure data — no LLM)
   await actionsCore.retryStuckApproved(db);
 }
 ```
 
-Each step logs independently. Failures in one step don't prevent subsequent steps from running.
+Steps 1, 3, and 5 involve LLM analysis and flow through `agents/`. Steps 2, 4, 6, and 7 are pure data operations handled by `core/` directly. Each step logs independently. Failures in one step don't prevent subsequent steps from running.
 
 ---
 
-## Connector Injection
+## Connector Access
 
-Core functions that need external APIs receive connector interfaces as arguments — never import concrete implementations:
+Connectors are module-level singletons (see [backend_architecture.md](backend_architecture.md#singleton-pattern)). Core functions that need external APIs import them directly:
 
 ```typescript
 // core/threads.ts
-export async function sortInbox(
-  db: DB,
-  emailClient: EmailClient   // ← interface from connectors/interfaces.ts
-): Promise<{ jobId: string }>
+import { emailClient } from '../connectors';
+
+export async function fetchNewThreads(db: DB): Promise<Thread[]> {
+  const gmailThreads = await emailClient.searchThreads('newer_than:1d');
+  // upsert into DB...
+}
 
 // core/events.ts
-export async function prepMeeting(
-  db: DB,
-  id: string,
-  emailClient: EmailClient,
-  calendarClient: CalendarClient,
-  driveClient: DriveClient
-): Promise<{ jobId: string }>
+import { calendarClient } from '../connectors';
+
+export async function syncFromCalendar(db: DB, timeRange: TimeRange): Promise<Event[]> {
+  const events = await calendarClient.listEvents(timeRange.from, timeRange.to);
+  // upsert into DB...
+}
 ```
 
-Routes and the heartbeat cron inject concrete instances created at app startup (see [backend_architecture.md](backend_architecture.md#connectors)). Tests inject stubs.
+For testing, use module mocking to swap singletons with stubs returning static JSON fixtures.
 
 ---
 

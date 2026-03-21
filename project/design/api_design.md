@@ -143,7 +143,7 @@ const OAuthCallbackQuery = z.object({
 | `GET` | `/api/threads` | `threadCore.list()` | List threads, optionally filtered by bucket |
 | `GET` | `/api/threads/:id` | `threadCore.getById()` | Get single thread with classification |
 | `PATCH` | `/api/threads/:id` | `threadCore.update()` | Move thread to a different bucket |
-| `POST` | `/api/threads/sort` | `threadCore.sortInbox()` | Trigger inbox sort (dispatches skill) |
+| `POST` | `/api/threads/sort` | `orchestrator.sortInbox()` | Trigger inbox sort (agent skill — LLM classification) |
 
 ### `GET /api/threads`
 
@@ -227,7 +227,7 @@ No pagination — buckets are a small, fixed set.
 ```typescript
 const CreateBucketBody = z.object({
   name: z.string().min(1).max(100),
-  description: z.string().max(500).optional(),
+  description: z.string().min(1).max(500),
   sortOrder: z.number().int().optional(),
 });
 ```
@@ -360,7 +360,7 @@ const UpdateTaskBody = z.object({
 **Body:**
 ```typescript
 const TransitionTaskBody = z.object({
-  to: z.enum(['confirmed', 'in_progress', 'complete_proposed', 'complete', 'rejected']),
+  to: z.enum(['confirmed', 'in_progress', 'complete_proposed', 'complete', 'rejected', 'overdue']),
 });
 ```
 
@@ -384,7 +384,7 @@ Core validates the transition is legal per the status flow.
 | `GET` | `/api/events` | `eventCore.list()` | List events in a date range |
 | `GET` | `/api/events/:id` | `eventCore.getById()` | Get single event with brief |
 | `GET` | `/api/events/:id/brief` | `eventCore.getBrief()` | Get just the meeting brief |
-| `POST` | `/api/events/:id/prep` | `eventCore.prepMeeting()` | Trigger meeting prep (dispatches skill) |
+| `POST` | `/api/events/:id/prep` | `orchestrator.prepMeeting()` | Trigger meeting prep (agent skill — LLM brief generation) |
 
 ### `GET /api/events`
 
@@ -697,70 +697,41 @@ The key UX flow from the API perspective:
 | Method | Path | Core Function | Description |
 |---|---|---|---|
 | `GET` | `/api/briefings/today` | `briefingCore.getToday()` | Get today's briefing if it exists |
-| `POST` | `/api/briefings/generate` | `briefingCore.generate()` | Trigger daily briefing generation ("Start Day") |
 
 ### `GET /api/briefings/today`
 
 Returns the most recent briefing for today. If no briefing has been generated yet, returns `404`.
+
+The response returns the stored `BriefingContent` JSONB directly — IDs + summary strings, not full hydrated entities. The frontend fetches full entity details via their respective endpoints when the user drills in.
 
 **Response:** `200`
 ```typescript
 {
   data: {
     id: string,
+    date: string,
     generatedAt: string,
-    sections: {
-      priorityActions: {
-        actions: Action[],
-        summary: string,
-      },
-      meetings: {
-        events: (Event & { brief: EventBrief })[],
-        summary: string,
-      },
-      tasksDue: {
-        tasks: Task[],
-        overdue: Task[],
-        summary: string,
-      },
-      delegations: {
-        stale: Task[],
-        pending: Task[],
-        summary: string,
-      },
-      followUps: {
-        threads: Thread[],
-        summary: string,
-      },
-    },
+    content: BriefingContent,  // See shared/schemas/briefing.ts
   }
 }
 ```
 
 **Errors:** `404` if no briefing generated today.
 
-### `POST /api/briefings/generate`
-
-The "Start Day" button. Triggers the Daily Briefing skill which orchestrates Sort Inbox + Prep Meeting + task queries. Returns immediately — the briefing is assembled asynchronously and delivered via WebSocket.
-
-**Response:** `202`
-```typescript
-{ data: { jobId: string } }
-```
-
-If a briefing is already being generated, returns `409` with `{ error: "Briefing generation already in progress" }`.
-
 ---
 
-## Conversation
+## Agent
 
-**File:** `routes/conversation.ts`
+**File:** `routes/agent.ts`
 
-| Method | Path | Core Function | Description |
+Routes for agent interaction. These are the only routes that import from `agents/` — all other routes go through `core/`.
+
+| Method | Path | Handler | Description |
 |---|---|---|---|
-| `POST` | `/api/conversation` | `conversationCore.sendMessage()` | Send a message to the orchestrator |
+| `POST` | `/api/agent/chat` | `orchestrator.sendMessage()` | Send a message to the orchestrator |
+| `POST` | `/api/agent/start-day` | `orchestrator.startDay()` | Trigger daily briefing generation |
 
-### `POST /api/conversation`
+### `POST /api/agent/chat`
 
 **Body:**
 ```typescript
@@ -775,6 +746,17 @@ Sends the user's message to the orchestrator agent. The response streams back vi
 ```typescript
 { data: { conversationId: string } }
 ```
+
+### `POST /api/agent/start-day`
+
+Triggers the Daily Briefing skill which orchestrates Sort Inbox + Prep Meeting + task queries. Returns immediately — the briefing is assembled asynchronously and delivered via WebSocket. This is the "Start Day" button.
+
+**Response:** `202`
+```typescript
+{ data: { jobId: string } }
+```
+
+If a briefing is already being generated, returns `409` with `{ error: "Briefing generation already in progress" }`.
 
 ---
 
@@ -872,7 +854,7 @@ All schemas live in `packages/shared/src/schemas/`, one file per entity.
 | `people.ts` | `ListPeopleQuery`, `CreatePersonBody`, `UpdatePersonBody` |
 | `actions.ts` | `ListActionsQuery`, `ApproveActionBody`, `RejectActionBody` |
 | `briefings.ts` | — (no request bodies) |
-| `conversation.ts` | `SendMessageBody` |
+| `agent.ts` | `SendMessageBody` |
 | `common.ts` | `PaginationQuery` (base cursor + limit, extended by list schemas) |
 
 ### Base Pagination Schema
@@ -909,7 +891,7 @@ Complete mapping of every route handler to its core function call.
 | `GET /api/threads` | `threadCore.list(db, query)` |
 | `GET /api/threads/:id` | `threadCore.getById(db, id)` |
 | `PATCH /api/threads/:id` | `threadCore.update(db, id, body)` |
-| `POST /api/threads/sort` | `threadCore.sortInbox(db)` |
+| `POST /api/threads/sort` | `orchestrator.sortInbox(db)` — agent route |
 | `GET /api/buckets` | `bucketCore.list(db)` |
 | `POST /api/buckets` | `bucketCore.create(db, body)` |
 | `PATCH /api/buckets/:id` | `bucketCore.update(db, id, body)` |
@@ -922,7 +904,7 @@ Complete mapping of every route handler to its core function call.
 | `GET /api/events` | `eventCore.list(db, query)` |
 | `GET /api/events/:id` | `eventCore.getById(db, id)` |
 | `GET /api/events/:id/brief` | `eventCore.getBrief(db, id)` |
-| `POST /api/events/:id/prep` | `eventCore.prepMeeting(db, id)` |
+| `POST /api/events/:id/prep` | `orchestrator.prepMeeting(db, id)` — agent route |
 | `GET /api/people` | `peopleCore.list(db, query)` |
 | `GET /api/people/:id` | `peopleCore.getById(db, id)` |
 | `POST /api/people` | `peopleCore.create(db, body)` |
@@ -935,8 +917,8 @@ Complete mapping of every route handler to its core function call.
 | `POST /api/actions/:id/approve` | `actionCore.approve(db, id, body?)` |
 | `POST /api/actions/:id/reject` | `actionCore.reject(db, id, body?)` |
 | `GET /api/briefings/today` | `briefingCore.getToday(db)` |
-| `POST /api/briefings/generate` | `briefingCore.generate(db)` |
-| `POST /api/conversation` | `conversationCore.sendMessage(db, body)` |
+| `POST /api/agent/chat` | `orchestrator.sendMessage(body)` — agent route |
+| `POST /api/agent/start-day` | `orchestrator.startDay(db)` — agent route |
 
 ---
 
@@ -951,6 +933,6 @@ Complete mapping of every route handler to its core function call.
 | `POST /api/*` | Yes |
 | `PATCH /api/*` | Yes |
 | `DELETE /api/*` | Yes |
-| `ws://host/ws` | Yes (token validated on connection upgrade) |
+| `ws://host/ws` | Yes (session cookie validated on connection upgrade) |
 
 Auth middleware is applied via `app.use('/api/*', authMiddleware())`. See [backend_architecture.md](backend_architecture.md) for middleware implementation.

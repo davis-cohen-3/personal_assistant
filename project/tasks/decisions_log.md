@@ -44,3 +44,10 @@ All architectural and design decisions with rationale. Coding agents should trea
 | Heartbeat via cron (not webhooks) | Simpler to start. Webhooks can be added later for real-time updates. |
 | Agent-proposes, human-confirms | Universal pattern across People, Tasks, Actions, delegation. Trust earned incrementally. |
 | Orchestrator + ephemeral subagents | Orchestrator stays clean by delegating deep work. Subagents get isolated context with only what they need. |
+| Core handles zero LLM work | `core/` is pure data operations (connectors + persistence). All LLM-driven work (classification, brief generation, message drafting, completion detection) lives in `agents/`. Prevents circular dependency: `agents/ → core/ → db/`. |
+| Connectors as singletons | Module-level singletons initialized at startup. Imported directly by any layer that needs them — no parameter passing. Simpler than dependency injection for single-user app. |
+| No dry run mode | Test suite provides sufficient coverage. Dry run would add complexity to every connector and action for a rarely-used feature. |
+| Agent routes separate from core routes | `routes/agent.ts` imports from `agents/` for chat, start-day, and other LLM-driven endpoints. All other routes import from `core/` only. |
+| Resolve orphaned participants from calendar | When a soft-deleted person appears in `events.participant_ids`, resolve name/email from the original Google Calendar event rather than showing "unknown." |
+| Briefing response returns IDs, not full objects | `GET /api/briefings/today` returns the stored `BriefingContent` JSONB (IDs + summaries). Frontend fetches full entity details via their respective endpoints when user drills in. Avoids expensive hydration on every briefing load. |
+| WebSocket auth via session cookie | Same-origin cookie validated on connection upgrade. No separate token mechanism needed for single-user app. |
