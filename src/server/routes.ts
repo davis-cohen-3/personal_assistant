@@ -70,6 +70,11 @@ const calendarEventsQuerySchema = z.object({
   maxResults: z.coerce.number().int().min(1).max(25).optional(),
 });
 
+apiRoutes.post("/gmail/sync", async (c) => {
+  const result = await email.syncInbox(25);
+  return c.json(result);
+});
+
 apiRoutes.get("/gmail/threads", async (c) => {
   const rawQuery = {
     q: c.req.query("q"),

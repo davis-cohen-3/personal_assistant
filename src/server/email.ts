@@ -117,6 +117,10 @@ export async function search(query: string, maxResults?: number) {
 }
 
 export async function getThread(gmailThreadId: string) {
+  const cached = await queries.getEmailThread(gmailThreadId);
+  if (cached && cached.messages.length > 0) {
+    return cached;
+  }
   const full = await gmail.getThread(gmailThreadId);
   await queries.upsertEmailThread(toThreadRecord(full));
   await queries.upsertEmailMessages(toMessageRecords(full.messages));
@@ -142,6 +146,9 @@ export async function sendMessage(
 export async function replyToThread(threadId: string, messageId: string, body: string) {
   console.info("email.replyToThread", { threadId, messageId });
   await gmail.replyToThread(threadId, messageId, body);
+  const full = await gmail.getThread(threadId);
+  await queries.upsertEmailThread(toThreadRecord(full));
+  await queries.upsertEmailMessages(toMessageRecords(full.messages));
   console.info("email.replyToThread complete", { threadId });
 }
 
@@ -155,6 +162,7 @@ export async function createDraft(to: string, subject: string, body: string, thr
 export async function trashThread(gmailThreadId: string) {
   console.info("email.trashThread", { gmailThreadId });
   await gmail.trashThread(gmailThreadId);
+  await queries.unassignThread(gmailThreadId);
   console.info("email.trashThread complete", { gmailThreadId });
 }
 

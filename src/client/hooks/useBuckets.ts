@@ -7,6 +7,9 @@ export interface BucketThread {
   bucket_id: string;
   subject: string | null;
   snippet: string | null;
+  from_name: string | null;
+  from_email: string | null;
+  last_message_at: string | null;
 }
 
 export interface BucketWithThreads {
@@ -16,6 +19,8 @@ export interface BucketWithThreads {
   sort_order: number;
   threads: BucketThread[];
 }
+
+const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 export function useBuckets() {
   const [buckets, setBuckets] = useState<BucketWithThreads[]>([]);
@@ -45,11 +50,11 @@ export function useBuckets() {
   }, [refetch]);
 
   useEffect(() => {
-    const handler = () => {
-      if (document.visibilityState === "visible") refetch();
-    };
-    document.addEventListener("visibilitychange", handler);
-    return () => document.removeEventListener("visibilitychange", handler);
+    const id = setInterval(async () => {
+      await fetchApi("/api/gmail/sync", { method: "POST" }).catch(() => {});
+      await refetch();
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
   }, [refetch]);
 
   return { buckets, loading, error, refetch };
