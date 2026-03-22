@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { fetchApi } from "@/lib/fetchApi";
@@ -27,28 +27,40 @@ export default function ThreadDetail({ threadId, onClose, onArchive }: Props) {
   const [loading, setLoading] = useState(true);
   const [replyBody, setReplyBody] = useState("");
   const [sending, setSending] = useState(false);
+  const [replySent, setReplySent] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchThread = useCallback(
+    async (markRead: boolean) => {
+      setLoading(true);
+      try {
+        const r = await fetchApi(`/api/gmail/threads/${threadId}`);
+        const data: Thread = await r.json();
+        setThread(data);
+        // Scroll to bottom after React renders the new messages
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 0);
+        if (markRead) {
+          const latest = data.messages[data.messages.length - 1];
+          if (latest) {
+            fetchApi(`/api/gmail/messages/${latest.gmail_message_id}/read`, {
+              method: "POST",
+            }).catch((err: unknown) => {
+              console.error("Failed to mark message as read", { error: err });
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load thread", { threadId, error: err });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [threadId],
+  );
 
   useEffect(() => {
-    setLoading(true);
-    fetchApi(`/api/gmail/threads/${threadId}`)
-      .then((r) => r.json())
-      .then((data: Thread) => {
-        setThread(data);
-        // Mark latest message as read
-        const latest = data.messages[data.messages.length - 1];
-        if (latest) {
-          fetchApi(`/api/gmail/messages/${latest.gmail_message_id}/read`, {
-            method: "POST",
-          }).catch((err: unknown) => {
-            console.error("Failed to mark message as read", { error: err });
-          });
-        }
-      })
-      .catch((err: unknown) => {
-        console.error("Failed to load thread", { threadId, error: err });
-      })
-      .finally(() => setLoading(false));
-  }, [threadId]);
+    fetchThread(true);
+  }, [fetchThread]);
 
   const handleReply = async () => {
     if (!thread || !replyBody.trim()) return;
@@ -61,6 +73,9 @@ export default function ThreadDetail({ threadId, onClose, onArchive }: Props) {
         body: JSON.stringify({ body: replyBody, messageId: lastMessage.gmail_message_id }),
       });
       setReplyBody("");
+      setReplySent(true);
+      setTimeout(() => setReplySent(false), 3000);
+      await fetchThread(false);
     } catch (err) {
       console.error("Failed to send reply", { error: err });
     } finally {
@@ -98,20 +113,24 @@ export default function ThreadDetail({ threadId, onClose, onArchive }: Props) {
               <Spinner />
             </div>
           ) : (
-            thread?.messages.map((msg) => (
-              <div key={msg.gmail_message_id} className="space-y-1">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{msg.from}</span>
-                  <span>{new Date(msg.date).toLocaleString()}</span>
+            <>
+              {thread?.messages.map((msg) => (
+                <div key={msg.gmail_message_id} className="space-y-1">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>{msg.from}</span>
+                    <span>{new Date(msg.date).toLocaleString()}</span>
+                  </div>
+                  {/* Plain text only — never dangerouslySetInnerHTML for email content */}
+                  <pre className="text-sm whitespace-pre-wrap font-sans">{msg.body_text}</pre>
                 </div>
-                {/* Plain text only — never dangerouslySetInnerHTML for email content */}
-                <pre className="text-sm whitespace-pre-wrap font-sans">{msg.body_text}</pre>
-              </div>
-            ))
+              ))}
+              <div ref={messagesEndRef} />
+            </>
           )}
         </div>
 
         <div className="p-4 border-t space-y-2">
+          {replySent && <div className="text-sm text-green-600 font-medium">Reply sent</div>}
           <textarea
             className="w-full rounded-md border px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
             rows={3}

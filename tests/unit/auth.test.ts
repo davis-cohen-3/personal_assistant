@@ -14,6 +14,7 @@ vi.mock("../../src/server/google/auth.js", () => ({
   }),
   persistTokens: vi.fn().mockResolvedValue(undefined),
   loadTokens: vi.fn().mockResolvedValue(undefined),
+  isGoogleConnected: vi.fn().mockResolvedValue(true),
 }));
 
 vi.mock("googleapis", () => ({

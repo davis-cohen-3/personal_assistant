@@ -474,10 +474,8 @@ describe("handleWebSocket", () => {
   it("sends error and returns if conversation not found on message", async () => {
     const ws = makeMockWs();
     const ctx = makeCtx("conv-1");
-    // onOpen succeeds, but by the time message arrives, conversation is gone
-    mockGetConversation
-      .mockResolvedValueOnce({ id: "conv-1", sdk_session_id: null })
-      .mockResolvedValueOnce(null);
+    // onOpen doesn't call getConversation — only onMessage does
+    mockGetConversation.mockResolvedValueOnce(null);
     const events = handleWebSocket(ctx);
     await events.onOpen?.(new Event("open"), ws);
 
