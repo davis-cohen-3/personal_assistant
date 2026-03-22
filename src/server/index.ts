@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import type { Server } from "node:http";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -117,7 +118,12 @@ function shutdown() {
 
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {
-    console.warn("Port 3000 in use, retrying in 500ms...");
+    console.warn("Port 3000 in use — killing existing process");
+    try {
+      execSync("lsof -ti:3000 | xargs kill -9 2>/dev/null", { stdio: "ignore" });
+    } catch {
+      // No process found or already dead
+    }
     setTimeout(() => server.listen(3000), 500);
   } else {
     console.error("Server error", { error: err });

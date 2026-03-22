@@ -241,7 +241,6 @@ export async function streamQuery(
     await createChatMessage(conversationId, "assistant", fullText);
   }
   ws.send(JSON.stringify({ type: "text_done", content: fullText }));
-  console.info("text_done sent, socket remains open", { conversationId });
 }
 
 export function handleWebSocket(c: Context): WSEvents {
@@ -312,7 +311,6 @@ export function handleWebSocket(c: Context): WSEvents {
         conversationId,
         code: (evt as CloseEvent).code,
         reason: (evt as CloseEvent).reason,
-        wasClean: (evt as CloseEvent).wasClean,
       });
     },
   };

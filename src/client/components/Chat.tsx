@@ -24,6 +24,13 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
   const closingIntentionallyRef = useRef(false);
   const activeConversationIdRef = useRef<string | null>(null);
 
+  // Stable refs for callbacks — prevents openSocket from changing identity
+  // when parent re-renders (which would tear down the WebSocket via effect cleanup)
+  const onAgentDoneRef = useRef(onAgentDone);
+  const onTitleUpdateRef = useRef(onTitleUpdate);
+  onAgentDoneRef.current = onAgentDone;
+  onTitleUpdateRef.current = onTitleUpdate;
+
   // Load message history when conversationId changes
   useEffect(() => {
     if (!conversationId) {
@@ -45,102 +52,97 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
       .finally(() => setLoading(false));
   }, [conversationId]);
 
-  const openSocket = useCallback(
-    (convId: string) => {
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
+  const openSocket = useCallback((convId: string) => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(`${proto}://${window.location.host}/ws?conversationId=${convId}`);
+    wsRef.current = socket;
+
+    socket.onmessage = (event: MessageEvent<string>) => {
+      const data = JSON.parse(event.data) as WsServerMessage;
+
+      if (data.type === "text_delta") {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant" && last.streaming) {
+            return [...prev.slice(0, -1), { ...last, text: last.text + data.content }];
+          }
+          return [
+            ...prev,
+            { id: crypto.randomUUID(), role: "assistant", text: data.content, streaming: true },
+          ];
+        });
+      } else if (data.type === "text_done") {
+        setMessages((prev) => {
+          const withoutStreaming = prev.filter((m) => !m.streaming);
+          return [
+            ...withoutStreaming,
+            { id: crypto.randomUUID(), role: "assistant", text: data.content },
+          ];
+        });
+        setLoading(false);
+        onAgentDoneRef.current();
+      } else if (data.type === "error") {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "system", text: data.message },
+        ]);
+        setLoading(false);
+      } else if (data.type === "conversation_updated") {
+        onTitleUpdateRef.current();
+      }
+    };
+
+    socket.onopen = () => {
+      setConnectionLost(false);
+      backoffRef.current = BACKOFF_BASE_MS;
+    };
+
+    socket.onclose = (event: CloseEvent) => {
+      // Only null out the ref if it still points to THIS socket.
+      // When switching conversations, socket B may already be assigned
+      // before socket A's onclose fires (async). Without this check,
+      // socket A's onclose would clobber socket B's reference.
+      if (wsRef.current === socket) {
+        wsRef.current = null;
       }
 
-      const proto = window.location.protocol === "https:" ? "wss" : "ws";
-      const socket = new WebSocket(
-        `${proto}://${window.location.host}/ws?conversationId=${convId}`,
-      );
-      wsRef.current = socket;
+      // Intentional close (conversation switch / unmount) — don't reconnect
+      if (closingIntentionallyRef.current) {
+        closingIntentionallyRef.current = false;
+        return;
+      }
 
-      socket.onmessage = (event: MessageEvent<string>) => {
-        const data = JSON.parse(event.data) as WsServerMessage;
+      // Stale close — user already switched to a different conversation
+      if (convId !== activeConversationIdRef.current) {
+        return;
+      }
 
-        if (data.type === "text_delta") {
-          setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === "assistant" && last.streaming) {
-              return [...prev.slice(0, -1), { ...last, text: last.text + data.content }];
-            }
-            return [
-              ...prev,
-              { id: crypto.randomUUID(), role: "assistant", text: data.content, streaming: true },
-            ];
-          });
-        } else if (data.type === "text_done") {
-          setMessages((prev) => {
-            const withoutStreaming = prev.filter((m) => !m.streaming);
-            return [
-              ...withoutStreaming,
-              { id: crypto.randomUUID(), role: "assistant", text: data.content },
-            ];
-          });
-          setLoading(false);
-          onAgentDone();
-        } else if (data.type === "error") {
-          setMessages((prev) => [
-            ...prev,
-            { id: crypto.randomUUID(), role: "system", text: data.message },
-          ]);
-          setLoading(false);
-        } else if (data.type === "conversation_updated") {
-          onTitleUpdate();
+      // Normal close (code 1000) — server intentionally closed, no reconnect
+      if (event.code === 1000) {
+        return;
+      }
+
+      // Unexpected close — reconnect with backoff
+      console.warn("WebSocket closed unexpectedly", {
+        code: event.code,
+        wasClean: event.wasClean,
+        convId,
+      });
+      setConnectionLost(true);
+      const delay = Math.min(backoffRef.current, BACKOFF_MAX_MS);
+      backoffRef.current = Math.min(backoffRef.current * 2, BACKOFF_MAX_MS);
+      reconnectTimerRef.current = setTimeout(() => {
+        if (convId === activeConversationIdRef.current) {
+          openSocket(convId);
         }
-      };
-
-      socket.onopen = () => {
-        setConnectionLost(false);
-        backoffRef.current = BACKOFF_BASE_MS;
-      };
-
-      socket.onclose = (event: CloseEvent) => {
-        // Only null out the ref if it still points to THIS socket.
-        // When switching conversations, socket B may already be assigned
-        // before socket A's onclose fires (async). Without this check,
-        // socket A's onclose would clobber socket B's reference.
-        if (wsRef.current === socket) {
-          wsRef.current = null;
-        }
-
-        // Intentional close (conversation switch / unmount) — don't reconnect
-        if (closingIntentionallyRef.current) {
-          closingIntentionallyRef.current = false;
-          return;
-        }
-
-        // Stale close — user already switched to a different conversation
-        if (convId !== activeConversationIdRef.current) {
-          return;
-        }
-
-        // Normal close (code 1000) — server intentionally closed, no reconnect
-        if (event.code === 1000) {
-          return;
-        }
-
-        // Unexpected close — reconnect with backoff
-        console.warn("WebSocket closed unexpectedly", {
-          code: event.code,
-          wasClean: event.wasClean,
-          convId,
-        });
-        setConnectionLost(true);
-        const delay = Math.min(backoffRef.current, BACKOFF_MAX_MS);
-        backoffRef.current = Math.min(backoffRef.current * 2, BACKOFF_MAX_MS);
-        reconnectTimerRef.current = setTimeout(() => {
-          if (convId === activeConversationIdRef.current) {
-            openSocket(convId);
-          }
-        }, delay);
-      };
-    },
-    [onAgentDone, onTitleUpdate],
-  );
+      }, delay);
+    };
+  }, []);
 
   // Manage WebSocket — one per conversation
   useEffect(() => {
