@@ -1,5 +1,6 @@
 // Chat message shape used by both frontend and backend
 export interface ChatMessage {
+  id: string;
   role: "user" | "assistant" | "system";
   text: string;
   streaming?: boolean;
@@ -39,9 +40,9 @@ export type WsServerMessage = WsTextDelta | WsTextDone | WsError | WsConversatio
 export interface Conversation {
   id: string;
   title: string;
-  sdkSessionId: string | null;
-  createdAt: string;
-  updatedAt: string;
+  sdk_session_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ConversationWithMessages extends Conversation {

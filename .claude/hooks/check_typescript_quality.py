@@ -42,10 +42,10 @@ def check_content(content: str, file_path: str) -> list:
                 f"Line {i}: 'as any' type assertion — use proper typing"
             )
 
-        # No console.log in production code (allow in tests)
-        if not is_test and re.search(r'\bconsole\.(log|warn|info|debug)\b', line):
+        # No console.log/debug in production code (console.info, console.warn, console.error are allowed)
+        if not is_test and re.search(r'\bconsole\.(log|debug)\b', line):
             violations.append(
-                f"Line {i}: console.log in production code — use project logger"
+                f"Line {i}: console.log in production code — use console.info, console.error, or console.warn"
             )
 
         # Swallowed exceptions (catch with empty body or just pass)
@@ -108,7 +108,7 @@ def main():
             "\nFix: Use fail-fast patterns.\n"
             "- any → proper type or unknown\n"
             "- as any → proper type assertion with runtime check\n"
-            "- console.log → project logger\n"
+            "- console.log/debug → console.info, console.warn, or console.error\n"
             "- empty catch → handle error or re-throw"
         )
         print(error_msg, file=sys.stderr)

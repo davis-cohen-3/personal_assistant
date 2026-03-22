@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { createNodeWebSocket } from "@hono/node-server/ws";
+import { createNodeWebSocket } from "@hono/node-ws";
 import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -93,7 +93,7 @@ app.route("/api", apiRoutes);
 app.get("*", serveStatic({ path: "./dist/client/index.html" }));
 
 const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
-  console.error(`Server listening on http://localhost:${info.port}`);
+  console.info(`Server listening on http://localhost:${info.port}`);
 });
 
 injectWebSocket(server);
@@ -108,10 +108,21 @@ initAgent().catch((err) => {
 });
 
 function shutdown() {
-  console.error("Shutting down...");
+  console.info("Shutting down...");
+  server.closeAllConnections();
   server.close();
   process.exit(0);
 }
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.warn("Port 3000 in use, retrying in 500ms...");
+    setTimeout(() => server.listen(3000), 500);
+  } else {
+    console.error("Server error", { error: err });
+    process.exit(1);
+  }
+});
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);

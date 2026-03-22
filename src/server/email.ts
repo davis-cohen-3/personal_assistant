@@ -61,6 +61,7 @@ function toMessageRecords(messages: GmailMessage[]) {
 
 export async function syncInbox(maxResults?: number): Promise<{ new: number; updated: number }> {
   const syncLimit = maxResults ?? DEFAULT_SYNC_LIMIT;
+  console.info("email.syncInbox start", { syncLimit });
   const gmailThreads = await gmail.searchThreads("is:inbox", syncLimit);
 
   const gmailIds = gmailThreads.map((t) => t.id);
@@ -88,11 +89,17 @@ export async function syncInbox(maxResults?: number): Promise<{ new: number; upd
     ),
   );
 
+  console.info("email.syncInbox complete", {
+    new: newCount,
+    updated: updatedCount,
+    total: gmailThreads.length,
+  });
   return { new: newCount, updated: updatedCount };
 }
 
 export async function search(query: string, maxResults?: number) {
   const resultLimit = Math.min(maxResults ?? BATCH_SIZE, BATCH_SIZE);
+  console.info("email.search", { query, resultLimit });
   const gmailThreads = await gmail.searchThreads(query, resultLimit);
 
   await Promise.all(
@@ -127,21 +134,32 @@ export async function sendMessage(
   body: string,
   opts?: { cc?: string[] },
 ) {
-  return gmail.sendMessage(to, subject, body, opts);
+  console.info("email.sendMessage", { to, subject, cc: opts?.cc });
+  await gmail.sendMessage(to, subject, body, opts);
+  console.info("email.sendMessage complete", { to, subject });
 }
 
 export async function replyToThread(threadId: string, messageId: string, body: string) {
-  return gmail.replyToThread(threadId, messageId, body);
+  console.info("email.replyToThread", { threadId, messageId });
+  await gmail.replyToThread(threadId, messageId, body);
+  console.info("email.replyToThread complete", { threadId });
 }
 
 export async function createDraft(to: string, subject: string, body: string, threadId?: string) {
-  return gmail.createDraft(to, subject, body, threadId);
+  console.info("email.createDraft", { to, subject, threadId });
+  const draftId = await gmail.createDraft(to, subject, body, threadId);
+  console.info("email.createDraft complete", { draftId, to, subject });
+  return draftId;
 }
 
 export async function archiveThread(gmailThreadId: string) {
+  console.info("email.archiveThread", { gmailThreadId });
   await gmail.archiveThread(gmailThreadId);
+  console.info("email.archiveThread complete", { gmailThreadId });
 }
 
 export async function markAsRead(messageId: string) {
+  console.info("email.markAsRead", { messageId });
   await gmail.markAsRead(messageId);
+  console.info("email.markAsRead complete", { messageId });
 }

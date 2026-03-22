@@ -78,6 +78,12 @@ export async function listEvents(
   timeMax: string,
   opts?: ListEventsOptions,
 ): Promise<CalendarEvent[]> {
+  console.info("calendar.listEvents", {
+    timeMin,
+    timeMax,
+    maxResults: opts?.maxResults,
+    q: opts?.q,
+  });
   const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
   const res = await calendar.events.list({
     calendarId: "primary",
@@ -88,16 +94,25 @@ export async function listEvents(
     ...(opts?.maxResults !== undefined ? { maxResults: opts.maxResults } : {}),
     ...(opts?.q !== undefined ? { q: opts.q } : {}),
   });
-  return (res.data.items ?? []).map(parseEvent);
+  const events = (res.data.items ?? []).map(parseEvent);
+  console.info("calendar.listEvents result", { count: events.length });
+  return events;
 }
 
 export async function getEvent(eventId: string): Promise<CalendarEvent> {
+  console.info("calendar.getEvent", { eventId });
   const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
   const res = await calendar.events.get({ calendarId: "primary", eventId });
   return parseEvent(res.data);
 }
 
 export async function createEvent(input: CreateEventInput): Promise<CalendarEvent> {
+  console.info("calendar.createEvent", {
+    summary: input.summary,
+    start: input.start,
+    end: input.end,
+    attendees: input.attendees,
+  });
   const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
 
   const startField = input.timeZone
@@ -119,7 +134,14 @@ export async function createEvent(input: CreateEventInput): Promise<CalendarEven
       ...(input.attendees ? { attendees: input.attendees.map((email) => ({ email })) } : {}),
     },
   });
-  return parseEvent(res.data);
+  const event = parseEvent(res.data);
+  console.info("calendar.createEvent complete", {
+    eventId: event.id,
+    summary: event.summary,
+    start: event.start,
+    end: event.end,
+  });
+  return event;
 }
 
 export async function updateEvent(
@@ -133,6 +155,10 @@ export async function updateEvent(
     attendees: string[];
   }>,
 ): Promise<CalendarEvent> {
+  console.info("calendar.updateEvent", {
+    eventId,
+    fields: Object.keys(patch).filter((k) => patch[k as keyof typeof patch] !== undefined),
+  });
   const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
   const requestBody: calendar_v3.Schema$Event = {};
   if (patch.summary !== undefined) requestBody.summary = patch.summary;
@@ -149,16 +175,25 @@ export async function updateEvent(
     sendUpdates: "all",
     requestBody,
   });
-  return parseEvent(res.data);
+  const event = parseEvent(res.data);
+  console.info("calendar.updateEvent complete", {
+    eventId: event.id,
+    summary: event.summary,
+    start: event.start,
+    end: event.end,
+  });
+  return event;
 }
 
 export async function deleteEvent(eventId: string): Promise<void> {
+  console.info("calendar.deleteEvent", { eventId });
   const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
   await calendar.events.delete({
     calendarId: "primary",
     eventId,
     sendUpdates: "all",
   });
+  console.info("calendar.deleteEvent complete", { eventId });
 }
 
 export async function checkFreeBusy(
@@ -166,6 +201,7 @@ export async function checkFreeBusy(
   timeMax: string,
   calendarIds?: string[],
 ): Promise<FreeBusyResult> {
+  console.info("calendar.checkFreeBusy", { timeMin, timeMax, calendarIds });
   const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
   const ids = calendarIds ?? ["primary"];
   const res = await calendar.freebusy.query({

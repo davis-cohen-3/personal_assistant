@@ -129,16 +129,20 @@ return c.json({ error: 'Failed to fetch threads' }, 500);
 
 ## Logging
 
-Use `console.error` and `console.warn` for server-side logging. Railway captures stdout/stderr natively.
+Use `console.info`, `console.warn`, and `console.error` for server-side logging. Railway captures stdout/stderr natively.
 
 ```typescript
 // CORRECT — structured context via second arg
-console.error('Failed to send email', { threadId, error });
+console.info('Email sent', { threadId, to });
 console.warn('Validation failed', { issues: err.issues });
+console.error('Failed to send email', { threadId, error });
 
-// WRONG — console.log for debug noise
+// WRONG — console.log or console.debug (blocked by hook)
 console.log('bucket created');
-console.log(data);
+console.debug(data);
 ```
 
-Avoid `console.log` — reserve it for temporary debugging only (and remove before committing). Use `console.error` for errors, `console.warn` for warnings and general operational logging.
+- `console.info` — normal operational events (requests, tool calls, completions)
+- `console.warn` — unexpected but recoverable situations
+- `console.error` — errors and failures
+- Avoid `console.log` / `console.debug` — blocked by the quality hook

@@ -22,6 +22,7 @@ export function getAuthClient(): OAuth2Client {
 
     // Re-persist tokens automatically on every refresh
     oauthClient.on("tokens", (tokens) => {
+      console.info("google.auth token refresh received", { expiryDate: tokens.expiry_date });
       persistTokens(tokens).catch((err) => {
         console.error("Failed to persist refreshed tokens", { error: err });
       });
@@ -53,10 +54,18 @@ export async function persistTokens(tokens: Credentials): Promise<void> {
   });
 }
 
+export async function isGoogleConnected(): Promise<boolean> {
+  const stored = await getGoogleTokens();
+  return stored !== null;
+}
+
 export async function loadTokens(): Promise<void> {
   const stored = await getGoogleTokens();
-  if (!stored) return; // No tokens yet — pre-first-login
-
+  if (!stored) {
+    console.info("google.auth.loadTokens — no stored tokens (pre-login)");
+    return;
+  }
+  console.info("google.auth.loadTokens — credentials loaded", { expiryDate: stored.expiry_date });
   getAuthClient().setCredentials({
     access_token: decrypt(stored.access_token),
     refresh_token: decrypt(stored.refresh_token),

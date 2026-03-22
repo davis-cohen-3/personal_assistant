@@ -110,26 +110,32 @@ async function getSenderEmail(): Promise<string> {
 }
 
 export async function getMessage(id: string): Promise<GmailMessage> {
+  console.info("gmail.getMessage", { id });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   const res = await gmail.users.messages.get({ userId: "me", id, format: "full" });
   return decodeMessage(res.data);
 }
 
 export async function getThread(id: string): Promise<GmailThread> {
+  console.info("gmail.getThread", { id });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   const res = await gmail.users.threads.get({ userId: "me", id, format: "full" });
   const messages = (res.data.messages ?? []).map(decodeMessage);
+  console.info("gmail.getThread result", { id, messageCount: messages.length });
   return { id: res.data.id ?? id, messages };
 }
 
 export async function searchThreads(query: string, maxResults: number): Promise<ThreadSummary[]> {
+  console.info("gmail.searchThreads", { query, maxResults });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   const res = await gmail.users.threads.list({ userId: "me", q: query, maxResults });
-  return (res.data.threads ?? []).map((t) => ({
+  const threads = (res.data.threads ?? []).map((t) => ({
     id: t.id ?? "",
     snippet: t.snippet ?? undefined,
     historyId: t.historyId ?? undefined,
   }));
+  console.info("gmail.searchThreads result", { query, count: threads.length });
+  return threads;
 }
 
 export async function sendMessage(
@@ -138,6 +144,7 @@ export async function sendMessage(
   body: string,
   opts?: SendMessageOptions,
 ): Promise<void> {
+  console.info("gmail.sendMessage", { to, subject, cc: opts?.cc, bcc: opts?.bcc });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   const from = await getSenderEmail();
 
@@ -163,6 +170,7 @@ export async function sendMessage(
   }
 
   await gmail.users.messages.send({ userId: "me", requestBody: { raw: msg.asEncoded() } });
+  console.info("gmail.sendMessage complete", { from, to, subject, cc: opts?.cc });
 }
 
 export async function replyToThread(
@@ -170,6 +178,7 @@ export async function replyToThread(
   messageId: string,
   body: string,
 ): Promise<void> {
+  console.info("gmail.replyToThread", { threadId, messageId });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
 
   const original = await gmail.users.messages.get({
@@ -201,6 +210,11 @@ export async function replyToThread(
     userId: "me",
     requestBody: { raw: msg.asEncoded(), threadId },
   });
+  console.info("gmail.replyToThread complete", {
+    threadId,
+    to: originalFrom,
+    subject: replySubject,
+  });
 }
 
 export async function createDraft(
@@ -210,6 +224,7 @@ export async function createDraft(
   threadId?: string,
   opts?: { attachments?: EmailAttachment[] },
 ): Promise<string> {
+  console.info("gmail.createDraft", { to, subject, threadId });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   const from = await getSenderEmail();
 
@@ -237,29 +252,35 @@ export async function createDraft(
 
   const draftId = res.data.id;
   if (!draftId) throw new AppError("Draft created but no ID returned", 500);
+  console.info("gmail.createDraft complete", { draftId, to, subject, threadId });
   return draftId;
 }
 
 export async function modifyLabels(id: string, add: string[], remove: string[]): Promise<void> {
+  console.info("gmail.modifyLabels", { id, add, remove });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   await gmail.users.messages.modify({
     userId: "me",
     id,
     requestBody: { addLabelIds: add, removeLabelIds: remove },
   });
+  console.info("gmail.modifyLabels complete", { id, add, remove });
 }
 
 export async function markAsRead(id: string): Promise<void> {
+  console.info("gmail.markAsRead", { id });
   return modifyLabels(id, [], ["UNREAD"]);
 }
 
 export async function archiveThread(threadId: string): Promise<void> {
+  console.info("gmail.archiveThread", { threadId });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   await gmail.users.threads.modify({
     userId: "me",
     id: threadId,
     requestBody: { removeLabelIds: ["INBOX"] },
   });
+  console.info("gmail.archiveThread complete", { threadId });
 }
 
 export interface GmailLabel {

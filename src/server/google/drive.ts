@@ -54,6 +54,7 @@ function isExportSizeError(err: unknown): boolean {
 }
 
 export async function searchFiles(query: string, opts?: SearchFilesOptions): Promise<DriveFile[]> {
+  console.info("drive.searchFiles", { query, maxResults: opts?.maxResults });
   const drive = google.drive({ version: "v3", auth: getAuthClient() });
   const res = await drive.files.list({
     q: translateQuery(query),
@@ -62,10 +63,13 @@ export async function searchFiles(query: string, opts?: SearchFilesOptions): Pro
     fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
     ...(opts?.orderBy ? { orderBy: opts.orderBy } : {}),
   });
-  return (res.data.files ?? []).map(mapFile);
+  const files = (res.data.files ?? []).map(mapFile);
+  console.info("drive.searchFiles result", { count: files.length });
+  return files;
 }
 
 export async function listRecentFiles(maxResults?: number): Promise<DriveFile[]> {
+  console.info("drive.listRecentFiles", { maxResults });
   const drive = google.drive({ version: "v3", auth: getAuthClient() });
   const res = await drive.files.list({
     orderBy: "viewedByMeTime desc",
@@ -73,10 +77,13 @@ export async function listRecentFiles(maxResults?: number): Promise<DriveFile[]>
     fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
     q: "trashed = false",
   });
-  return (res.data.files ?? []).map(mapFile);
+  const files = (res.data.files ?? []).map(mapFile);
+  console.info("drive.listRecentFiles result", { count: files.length });
+  return files;
 }
 
 export async function readDocument(fileId: string): Promise<string> {
+  console.info("drive.readDocument", { fileId });
   const drive = google.drive({ version: "v3", auth: getAuthClient() });
   try {
     const res = await drive.files.export({
@@ -96,6 +103,7 @@ export async function readDocument(fileId: string): Promise<string> {
 }
 
 export async function getFileMetadata(fileId: string): Promise<DriveFile> {
+  console.info("drive.getFileMetadata", { fileId });
   const drive = google.drive({ version: "v3", auth: getAuthClient() });
   const res = await drive.files.get({
     fileId,

@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import { sign, verify } from "hono/jwt";
-import { getAuthClient, persistTokens } from "./google/auth.js";
+import { getAuthClient, isGoogleConnected, persistTokens } from "./google/auth.js";
 
 const rawAllowedUsers = process.env.ALLOWED_USERS;
 if (!rawAllowedUsers) throw new Error("Missing required env var: ALLOWED_USERS");
@@ -97,9 +97,10 @@ googleAuthRoutes.get("/status", async (c) => {
   if (!session) return c.json({ authenticated: false });
   try {
     await verify(session, JWT_SECRET, "HS256");
+    const googleConnected = await isGoogleConnected();
     // CSRF token: HMAC of the session JWT using CSRF_SECRET (HIGH-9)
     const csrfToken = crypto.createHmac("sha256", CSRF_SECRET).update(session).digest("hex");
-    return c.json({ authenticated: true, csrfToken });
+    return c.json({ authenticated: true, csrfToken, googleConnected });
   } catch (err) {
     console.error("Session verification failed", { error: err });
     return c.json({ authenticated: false });

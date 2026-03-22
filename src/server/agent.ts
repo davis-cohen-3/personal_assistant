@@ -27,8 +27,8 @@ what you found in plain text.
 
 ## Subagents
 You can spawn subagents for parallel work. Use them when:
-- Classifying a large number of threads (>25) — spawn email_classifier
-- Prepping multiple meetings — spawn meeting_prepper
+- Classifying a large number of threads (>25) — spawn email-classifier
+- Prepping multiple meetings — spawn meeting-prepper
 - Broad cross-service research — spawn researcher
 Subagents handle read-only work and return summaries. Only YOU execute write
 operations (sending email, creating events) after user approval.
@@ -56,7 +56,7 @@ const AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
     prompt:
       "You are an email classification assistant. Sync the inbox, read bucket definitions, then classify all unbucketed threads in batches of 25...",
     tools: ["mcp__assistant-tools__sync_email", "mcp__assistant-tools__buckets"],
-    model: "claude-haiku-4-5-20251001",
+    model: "haiku",
   },
   "meeting-prepper": {
     description: "Researches context for upcoming meetings. Use when prepping multiple meetings.",
@@ -66,7 +66,7 @@ const AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
       "mcp__assistant-tools__sync_email",
       "mcp__assistant-tools__drive",
     ],
-    model: "claude-haiku-4-5-20251001",
+    model: "haiku",
   },
   researcher: {
     description: "General-purpose cross-service search. Use for broad research queries.",
@@ -76,12 +76,12 @@ const AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
       "mcp__assistant-tools__calendar",
       "mcp__assistant-tools__drive",
     ],
-    model: "claude-haiku-4-5-20251001",
+    model: "haiku",
   },
 };
 
 const BASE_OPTIONS = {
-  model: "claude-opus-4-6",
+  model: "claude-sonnet-4-6",
   permissionMode: "bypassPermissions" as const,
   allowDangerouslySkipPermissions: true,
   allowedTools: [
@@ -162,6 +162,12 @@ export async function streamQuery(
       ...(withResume && sessionId !== undefined ? { resume: sessionId } : {}),
     };
 
+    console.info("Agent query start", {
+      conversationId,
+      promptLength: prompt.length,
+      withResume,
+    });
+
     const gen = query({ prompt, options });
     for await (const msg of gen) {
       if (!capturedSessionId && msg.session_id) {
@@ -176,8 +182,39 @@ export async function streamQuery(
         ws.send(JSON.stringify({ type: "text_delta", content: msg.event.delta.text }));
       }
 
+      if (msg.type === "tool_progress") {
+        console.info("Agent tool call", {
+          conversationId,
+          toolName: msg.tool_name,
+          elapsedSeconds: msg.elapsed_time_seconds,
+        });
+      }
+
       if (msg.type === "result" && msg.subtype === "success") {
         fullText = msg.result;
+        console.info("Agent query complete", {
+          conversationId,
+          numTurns: msg.num_turns,
+          durationMs: msg.duration_ms,
+          costUsd: msg.total_cost_usd,
+          resultLength: fullText.length,
+        });
+      }
+
+      if (msg.type === "result" && msg.subtype !== "success") {
+        console.error("Agent query error", {
+          conversationId,
+          subtype: msg.subtype,
+          numTurns: msg.num_turns,
+          errors: msg.errors,
+        });
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: "Agent encountered an error — check server logs",
+          }),
+        );
+        return;
       }
     }
   };
@@ -200,7 +237,9 @@ export async function streamQuery(
       sdk_session_id: capturedSessionId,
     });
   }
-  await createChatMessage(conversationId, "assistant", fullText);
+  if (fullText) {
+    await createChatMessage(conversationId, "assistant", fullText);
+  }
   ws.send(JSON.stringify({ type: "text_done", content: fullText }));
 }
 
@@ -208,16 +247,9 @@ export function handleWebSocket(c: Context): WSEvents {
   const conversationId = new URL(c.req.url).searchParams.get("conversationId");
 
   return {
-    onOpen: async (_evt, ws) => {
+    onOpen: (_evt, ws) => {
       if (!conversationId) {
         ws.send(JSON.stringify({ type: "error", message: "Missing conversationId" }));
-        ws.close();
-        return;
-      }
-
-      const conversation = await getConversation(conversationId);
-      if (!conversation) {
-        ws.send(JSON.stringify({ type: "error", message: "Conversation not found" }));
         ws.close();
       }
     },
@@ -236,27 +268,41 @@ export function handleWebSocket(c: Context): WSEvents {
         return;
       }
 
-      const conversation = await getConversation(conversationId);
-      if (!conversation) {
-        ws.send(JSON.stringify({ type: "error", message: "Conversation not found" }));
-        return;
+      console.info("WS message received", { conversationId, content: msg.content.slice(0, 80) });
+
+      try {
+        const conversation = await getConversation(conversationId);
+        if (!conversation) {
+          ws.send(JSON.stringify({ type: "error", message: "Conversation not found" }));
+          return;
+        }
+
+        await createChatMessage(conversationId, "user", msg.content);
+
+        const messages = await listMessagesByConversation(conversationId);
+        const userMessages = messages.filter((m) => m.role === "user");
+        if (userMessages.length === 1) {
+          const title = msg.content.slice(0, 80);
+          await updateConversation(conversationId, { title });
+          ws.send(JSON.stringify({ type: "conversation_updated", conversationId, title }));
+        }
+
+        const sessionId =
+          conversation.sdk_session_id !== null ? conversation.sdk_session_id : undefined;
+        await streamQuery(ws, conversationId, msg.content, sessionId);
+      } catch (err) {
+        console.error("Agent error", { conversationId, error: err });
+        ws.send(JSON.stringify({ type: "error", message: "Agent error — check server logs" }));
       }
-
-      await createChatMessage(conversationId, "user", msg.content);
-
-      const messages = await listMessagesByConversation(conversationId);
-      const userMessages = messages.filter((m) => m.role === "user");
-      if (userMessages.length === 1) {
-        const title = msg.content.slice(0, 80);
-        await updateConversation(conversationId, { title });
-        ws.send(JSON.stringify({ type: "conversation_updated", conversationId, title }));
-      }
-
-      const sessionId =
-        conversation.sdk_session_id !== null ? conversation.sdk_session_id : undefined;
-      await streamQuery(ws, conversationId, msg.content, sessionId);
     },
 
-    onClose: () => {},
+    onClose: (evt, _ws) => {
+      console.info("WebSocket closed", {
+        conversationId,
+        code: (evt as CloseEvent).code,
+        reason: (evt as CloseEvent).reason,
+        wasClean: (evt as CloseEvent).wasClean,
+      });
+    },
   };
 }

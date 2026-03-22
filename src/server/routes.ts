@@ -6,6 +6,12 @@ import * as calendar from "./google/calendar.js";
 
 export const apiRoutes = new Hono();
 
+apiRoutes.use("*", async (c, next) => {
+  console.info(`→ ${c.req.method} ${c.req.path}`);
+  await next();
+  console.info(`← ${c.req.method} ${c.req.path} ${c.res.status}`);
+});
+
 const sendEmailSchema = z.object({
   to: z.string().email(),
   cc: z.array(z.string().email()).optional(),
@@ -186,7 +192,13 @@ apiRoutes.get("/bucket-templates/:id", async (c) => {
 });
 
 apiRoutes.post("/bucket-templates/:id/apply", async (c) => {
-  const buckets = await queries.applyBucketTemplate(c.req.param("id"));
+  const templateId = c.req.param("id");
+  console.info("route:bucket-templates apply", { templateId });
+  const buckets = await queries.applyBucketTemplate(templateId);
+  console.info("route:bucket-templates apply complete", {
+    templateId,
+    bucketsCreated: buckets.length,
+  });
   return c.json(buckets, 201);
 });
 

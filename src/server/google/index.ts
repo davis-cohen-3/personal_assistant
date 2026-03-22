@@ -1,4 +1,4 @@
-export { getAuthClient, loadTokens, persistTokens } from "./auth.js";
+export { getAuthClient, isGoogleConnected, loadTokens, persistTokens } from "./auth.js";
 export type {
   CalendarEvent,
   CalendarEventAttendee,

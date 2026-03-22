@@ -28,9 +28,16 @@ export const handlers = {
       snippet?: string;
     }>;
   }) => {
+    console.info("tool:buckets", {
+      action: params.action,
+      id: params.id,
+      name: params.name,
+      assignmentCount: params.assignments?.length,
+    });
     switch (params.action) {
       case "list": {
         const result = await queries.listBuckets();
+        console.info("tool:buckets complete", { action: "list", count: result.length });
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "create": {
@@ -38,6 +45,11 @@ export const handlers = {
         if (!params.description) return err("description is required for create action");
         const result = await queries.createBucket(params.name, params.description);
         await queries.markAllForRebucket();
+        console.info("tool:buckets complete", {
+          action: "create",
+          id: result.id,
+          name: result.name,
+        });
         return {
           content: [
             {
@@ -54,11 +66,17 @@ export const handlers = {
       case "update": {
         if (!params.id) return err("id is required for update action");
         const result = await queries.updateBucket(params.id, params);
+        console.info("tool:buckets complete", {
+          action: "update",
+          id: result.id,
+          name: result.name,
+        });
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "delete": {
         if (!params.id) return err("id is required for delete action");
         await queries.deleteBucket(params.id);
+        console.info("tool:buckets complete", { action: "delete", id: params.id });
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "assign": {
@@ -73,14 +91,17 @@ export const handlers = {
             snippet: a.snippet,
           })),
         );
+        const remaining = await queries.countUnbucketedThreads();
+        console.info("tool:buckets complete", {
+          action: "assign",
+          assigned: result.length,
+          remaining,
+        });
         return {
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify({
-                assigned: result.length,
-                remaining: await queries.countUnbucketedThreads(),
-              }),
+              text: JSON.stringify({ assigned: result.length, remaining }),
             },
           ],
         };
@@ -94,6 +115,12 @@ export const handlers = {
     max_results?: number;
     thread_id?: string;
   }) => {
+    console.info("tool:sync_email", {
+      action: params.action,
+      query: params.query,
+      max_results: params.max_results,
+      thread_id: params.thread_id,
+    });
     switch (params.action) {
       case "sync": {
         const result = await email.syncInbox(params.max_results);
@@ -125,6 +152,12 @@ export const handlers = {
     thread_id?: string;
     message_id?: string;
   }) => {
+    console.info("tool:action_email", {
+      action: params.action,
+      to: params.to,
+      subject: params.subject,
+      thread_id: params.thread_id,
+    });
     switch (params.action) {
       case "send": {
         if (!params.to) return err("to is required for send action");
@@ -180,6 +213,13 @@ export const handlers = {
     attendees?: string[];
     query?: string;
   }) => {
+    console.info("tool:calendar", {
+      action: params.action,
+      event_id: params.event_id,
+      summary: params.summary,
+      time_min: params.time_min,
+      time_max: params.time_max,
+    });
     switch (params.action) {
       case "list": {
         if (!params.time_min) return err("time_min is required for list action");
@@ -240,6 +280,11 @@ export const handlers = {
     file_id?: string;
     max_results?: number;
   }) => {
+    console.info("tool:drive", {
+      action: params.action,
+      query: params.query,
+      file_id: params.file_id,
+    });
     switch (params.action) {
       case "search": {
         if (!params.query) return err("query is required for search action");

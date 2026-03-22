@@ -51,7 +51,7 @@ Both paths share the same `google/*` connectors. Agent writes data via tools, fr
 - **TypeScript strict mode** — No `any`, no `as any`, no type assertions unless verified at runtime
 - **Fail fast** — No fallbacks, no silent defaults, no swallowed errors
 - **Async everywhere** — All I/O is async/await
-- **Use console.error/console.warn for logging** — No external logger for v1
+- **Use console.info/console.warn/console.error for logging** — No external logger for v1
 - Anti-patterns and fail-fast rules: @agent_docs/code-quality.md
 
 ## Gotchas
@@ -60,7 +60,7 @@ Both paths share the same `google/*` connectors. Agent writes data via tools, fr
 ```typescript
 const value: any = ...                    // ❌ any type
 const x = foo as any;                     // ❌ as any assertion
-console.log("debug");                     // ❌ console.log for debugging (use console.error/warn)
+console.log("debug");                     // ❌ console.log for debugging (use console.info/warn/error)
 try { await doThing(); } catch {}         // ❌ Swallowed exception
 const v = config.get('key') ?? 'default'; // ❌ Fallback defaults
 ```
