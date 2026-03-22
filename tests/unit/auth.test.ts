@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   process.env.JWT_SECRET = "test-jwt-secret-that-is-long-enough-for-signing!!";
   process.env.CSRF_SECRET = "test-csrf-secret-that-is-long-enough-for-signing!";
-  process.env.ALLOWED_USERS = "allowed@example.com,other@example.com";
 });
 
 vi.mock("../../src/server/google/auth.js", () => ({
@@ -13,15 +12,18 @@ vi.mock("../../src/server/google/auth.js", () => ({
     setCredentials: vi.fn(),
   }),
   persistTokens: vi.fn().mockResolvedValue(undefined),
-  loadTokens: vi.fn().mockResolvedValue(undefined),
   isGoogleConnected: vi.fn().mockResolvedValue(true),
+}));
+
+vi.mock("../../src/server/db/queries.js", () => ({
+  upsertUser: vi.fn().mockResolvedValue({ id: "user-1", email: "allowed@example.com" }),
 }));
 
 vi.mock("googleapis", () => ({
   google: {
     oauth2: vi.fn().mockReturnValue({
       userinfo: {
-        get: vi.fn().mockResolvedValue({ data: { email: "allowed@example.com" } }),
+        get: vi.fn().mockResolvedValue({ data: { email: "allowed@example.com", name: "Test User", picture: "https://example.com/pic.jpg" } }),
       },
     }),
   },
@@ -37,7 +39,7 @@ const CSRF_SECRET = process.env.CSRF_SECRET!;
 
 async function makeSessionCookie(): Promise<string> {
   const token = await sign(
-    { email: "allowed@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
+    { userId: "user-1", email: "allowed@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
     JWT_SECRET,
     "HS256",
   );
@@ -76,6 +78,38 @@ describe("authMiddleware", () => {
     const res = await app.request("/protected", {
       method: "GET",
       headers: { Cookie: "session=not-a-valid-jwt" },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when JWT is missing userId", async () => {
+    const app = makeApp();
+    const token = await sign(
+      { email: "test@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
+      JWT_SECRET,
+      "HS256",
+    );
+
+    const res = await app.request("/protected", {
+      method: "GET",
+      headers: { Cookie: `session=${token}` },
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 401 when JWT is missing email", async () => {
+    const app = makeApp();
+    const token = await sign(
+      { userId: "user-1", exp: Math.floor(Date.now() / 1000) + 3600 },
+      JWT_SECRET,
+      "HS256",
+    );
+
+    const res = await app.request("/protected", {
+      method: "GET",
+      headers: { Cookie: `session=${token}` },
     });
 
     expect(res.status).toBe(401);
@@ -133,20 +167,16 @@ describe("authMiddleware", () => {
 });
 
 describe("GET /auth/google/callback", () => {
-  it("returns 403 when email is not in ALLOWED_USERS", async () => {
-    const { google } = await import("googleapis");
-    vi.mocked(google.oauth2).mockReturnValue({
-      userinfo: {
-        get: vi.fn().mockResolvedValue({ data: { email: "stranger@example.com" } }),
-      },
-    } as never);
+  it("creates a user for any email that completes OAuth", async () => {
+    const { upsertUser } = await import("../../src/server/db/queries.js");
 
     const app = new Hono();
     app.route("/auth", googleAuthRoutes);
 
     const res = await app.request("/auth/google/callback?code=authcode");
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(302);
+    expect(vi.mocked(upsertUser)).toHaveBeenCalledWith("allowed@example.com", "Test User", "https://example.com/pic.jpg");
   });
 
   it("redirects to /?auth_error=oauth_failed on OAuth error from Google", async () => {
@@ -167,6 +197,24 @@ describe("GET /auth/status", () => {
     app.route("/auth", googleAuthRoutes);
 
     const res = await app.request("/auth/status");
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.authenticated).toBe(false);
+  });
+
+  it("returns authenticated: false when JWT is missing userId", async () => {
+    const app = new Hono();
+    app.route("/auth", googleAuthRoutes);
+    const token = await sign(
+      { email: "test@example.com", exp: Math.floor(Date.now() / 1000) + 3600 },
+      JWT_SECRET,
+      "HS256",
+    );
+
+    const res = await app.request("/auth/status", {
+      headers: { Cookie: `session=${token}` },
+    });
     const body = await res.json();
 
     expect(res.status).toBe(200);

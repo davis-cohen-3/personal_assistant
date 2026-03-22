@@ -49,6 +49,14 @@ export type WsServerMessage =
   | WsToolStatus;
 
 // Database record types
+export interface User {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  created_at: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;

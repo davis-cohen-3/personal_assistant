@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import { AppError } from "../exceptions.js";
-import { getAuthClient } from "./auth.js";
+import type { OAuth2Client } from "./auth.js";
 
 export interface DriveFile {
   id: string;
@@ -48,9 +48,13 @@ function isExportSizeError(err: unknown): boolean {
   return msg.includes("export") || msg.includes("size") || msg.includes("limit");
 }
 
-export async function searchFiles(query: string, opts?: SearchFilesOptions): Promise<DriveFile[]> {
+export async function searchFiles(
+  auth: OAuth2Client,
+  query: string,
+  opts?: SearchFilesOptions,
+): Promise<DriveFile[]> {
   console.info("drive.searchFiles", { query, maxResults: opts?.maxResults });
-  const drive = google.drive({ version: "v3", auth: getAuthClient() });
+  const drive = google.drive({ version: "v3", auth });
   const res = await drive.files.list({
     q: translateQuery(query),
     spaces: "drive",
@@ -61,9 +65,12 @@ export async function searchFiles(query: string, opts?: SearchFilesOptions): Pro
   return (res.data.files ?? []).map(mapFile);
 }
 
-export async function listRecentFiles(maxResults?: number): Promise<DriveFile[]> {
+export async function listRecentFiles(
+  auth: OAuth2Client,
+  maxResults?: number,
+): Promise<DriveFile[]> {
   console.info("drive.listRecentFiles", { maxResults });
-  const drive = google.drive({ version: "v3", auth: getAuthClient() });
+  const drive = google.drive({ version: "v3", auth });
   const res = await drive.files.list({
     orderBy: "viewedByMeTime desc",
     pageSize: maxResults ?? 20,
@@ -73,9 +80,9 @@ export async function listRecentFiles(maxResults?: number): Promise<DriveFile[]>
   return (res.data.files ?? []).map(mapFile);
 }
 
-export async function readDocument(fileId: string): Promise<string> {
+export async function readDocument(auth: OAuth2Client, fileId: string): Promise<string> {
   console.info("drive.readDocument", { fileId });
-  const drive = google.drive({ version: "v3", auth: getAuthClient() });
+  const drive = google.drive({ version: "v3", auth });
   try {
     const res = await drive.files.export({
       fileId,
@@ -93,9 +100,9 @@ export async function readDocument(fileId: string): Promise<string> {
   }
 }
 
-export async function getFileMetadata(fileId: string): Promise<DriveFile> {
+export async function getFileMetadata(auth: OAuth2Client, fileId: string): Promise<DriveFile> {
   console.info("drive.getFileMetadata", { fileId });
-  const drive = google.drive({ version: "v3", auth: getAuthClient() });
+  const drive = google.drive({ version: "v3", auth });
   const res = await drive.files.get({
     fileId,
     fields: "id,name,mimeType,modifiedTime,webViewLink",

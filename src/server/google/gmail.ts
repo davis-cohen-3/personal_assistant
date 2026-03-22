@@ -1,7 +1,7 @@
 import { type gmail_v1, google } from "googleapis";
 import { createMimeMessage } from "mimetext";
 import { AppError } from "../exceptions.js";
-import { getAuthClient } from "./auth.js";
+import type { OAuth2Client } from "./auth.js";
 
 export interface GmailMessage {
   id: string;
@@ -101,32 +101,36 @@ function toBase64(data: Buffer | string): string {
   return Buffer.isBuffer(data) ? data.toString("base64") : data;
 }
 
-async function getSenderEmail(): Promise<string> {
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+async function getSenderEmail(auth: OAuth2Client): Promise<string> {
+  const gmail = google.gmail({ version: "v1", auth });
   const profile = await gmail.users.getProfile({ userId: "me" });
   const email = profile.data.emailAddress;
   if (!email) throw new AppError("Could not determine sender email from profile", 500);
   return email;
 }
 
-export async function getMessage(id: string): Promise<GmailMessage> {
+export async function getMessage(auth: OAuth2Client, id: string): Promise<GmailMessage> {
   console.info("gmail.getMessage", { id });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  const gmail = google.gmail({ version: "v1", auth });
   const res = await gmail.users.messages.get({ userId: "me", id, format: "full" });
   return decodeMessage(res.data);
 }
 
-export async function getThread(id: string): Promise<GmailThread> {
+export async function getThread(auth: OAuth2Client, id: string): Promise<GmailThread> {
   console.info("gmail.getThread", { id });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  const gmail = google.gmail({ version: "v1", auth });
   const res = await gmail.users.threads.get({ userId: "me", id, format: "full" });
   const messages = (res.data.messages ?? []).map(decodeMessage);
   return { id: res.data.id ?? id, messages };
 }
 
-export async function searchThreads(query: string, maxResults: number): Promise<ThreadSummary[]> {
+export async function searchThreads(
+  auth: OAuth2Client,
+  query: string,
+  maxResults: number,
+): Promise<ThreadSummary[]> {
   console.info("gmail.searchThreads", { query, maxResults });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  const gmail = google.gmail({ version: "v1", auth });
   const res = await gmail.users.threads.list({ userId: "me", q: query, maxResults });
   const threads = (res.data.threads ?? []).map((t) => ({
     id: t.id ?? "",
@@ -137,14 +141,15 @@ export async function searchThreads(query: string, maxResults: number): Promise<
 }
 
 export async function sendMessage(
+  auth: OAuth2Client,
   to: string,
   subject: string,
   body: string,
   opts?: SendMessageOptions,
 ): Promise<void> {
   console.info("gmail.sendMessage", { to, subject, cc: opts?.cc, bcc: opts?.bcc });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
-  const from = await getSenderEmail();
+  const gmail = google.gmail({ version: "v1", auth });
+  const from = await getSenderEmail(auth);
 
   const msg = createMimeMessage();
   msg.setSender({ addr: from });
@@ -171,12 +176,13 @@ export async function sendMessage(
 }
 
 export async function replyToThread(
+  auth: OAuth2Client,
   threadId: string,
   messageId: string,
   body: string,
 ): Promise<void> {
   console.info("gmail.replyToThread", { threadId, messageId });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  const gmail = google.gmail({ version: "v1", auth });
 
   const original = await gmail.users.messages.get({
     userId: "me",
@@ -191,7 +197,7 @@ export async function replyToThread(
     ? originalSubject
     : `Re: ${originalSubject}`;
 
-  const from = await getSenderEmail();
+  const from = await getSenderEmail(auth);
 
   const msg = createMimeMessage();
   msg.setSender({ addr: from });
@@ -210,6 +216,7 @@ export async function replyToThread(
 }
 
 export async function createDraft(
+  auth: OAuth2Client,
   to: string,
   subject: string,
   body: string,
@@ -217,8 +224,8 @@ export async function createDraft(
   opts?: { attachments?: EmailAttachment[] },
 ): Promise<string> {
   console.info("gmail.createDraft", { to, subject, threadId });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
-  const from = await getSenderEmail();
+  const gmail = google.gmail({ version: "v1", auth });
+  const from = await getSenderEmail(auth);
 
   const msg = createMimeMessage();
   msg.setSender({ addr: from });
@@ -247,9 +254,14 @@ export async function createDraft(
   return draftId;
 }
 
-export async function modifyLabels(id: string, add: string[], remove: string[]): Promise<void> {
+export async function modifyLabels(
+  auth: OAuth2Client,
+  id: string,
+  add: string[],
+  remove: string[],
+): Promise<void> {
   console.info("gmail.modifyLabels", { id, add, remove });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  const gmail = google.gmail({ version: "v1", auth });
   await gmail.users.messages.modify({
     userId: "me",
     id,
@@ -257,14 +269,14 @@ export async function modifyLabels(id: string, add: string[], remove: string[]):
   });
 }
 
-export async function markAsRead(id: string): Promise<void> {
+export async function markAsRead(auth: OAuth2Client, id: string): Promise<void> {
   console.info("gmail.markAsRead", { id });
-  return modifyLabels(id, [], ["UNREAD"]);
+  return modifyLabels(auth, id, [], ["UNREAD"]);
 }
 
-export async function trashThread(threadId: string): Promise<void> {
+export async function trashThread(auth: OAuth2Client, threadId: string): Promise<void> {
   console.info("gmail.trashThread", { threadId });
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+  const gmail = google.gmail({ version: "v1", auth });
   await gmail.users.threads.trash({
     userId: "me",
     id: threadId,
@@ -277,8 +289,8 @@ export interface GmailLabel {
   type?: string;
 }
 
-export async function listLabels(): Promise<GmailLabel[]> {
-  const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
+export async function listLabels(auth: OAuth2Client): Promise<GmailLabel[]> {
+  const gmail = google.gmail({ version: "v1", auth });
   const res = await gmail.users.labels.list({ userId: "me" });
   return (res.data.labels ?? []).map((l) => ({
     id: l.id ?? "",

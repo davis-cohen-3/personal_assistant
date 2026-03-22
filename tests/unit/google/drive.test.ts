@@ -18,10 +18,6 @@ vi.mock("googleapis", () => ({
   },
 }));
 
-vi.mock("../../../src/server/google/auth.js", () => ({
-  getAuthClient: vi.fn(() => ({})),
-}));
-
 import {
   getFileMetadata,
   listRecentFiles,
@@ -29,6 +25,8 @@ import {
   searchFiles,
   translateQuery,
 } from "../../../src/server/google/drive.js";
+
+const mockAuth = {} as never;
 
 const makeFile = (overrides?: object) => ({
   id: "file1",
@@ -47,7 +45,7 @@ describe("searchFiles", () => {
   it("calls files.list with trashed=false appended", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [makeFile()] } });
 
-    await searchFiles("budget report");
+    await searchFiles(mockAuth, "budget report");
 
     expect(mockFilesList).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -60,7 +58,7 @@ describe("searchFiles", () => {
   it("translates plain text query to fullText contains", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [] } });
 
-    await searchFiles("quarterly report");
+    await searchFiles(mockAuth, "quarterly report");
 
     const call = mockFilesList.mock.calls[0][0];
     expect(call.q).toContain("fullText contains 'quarterly report'");
@@ -69,7 +67,7 @@ describe("searchFiles", () => {
   it("passes through Drive DSL queries unchanged", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [] } });
 
-    await searchFiles("name contains 'budget'");
+    await searchFiles(mockAuth, "name contains 'budget'");
 
     const call = mockFilesList.mock.calls[0][0];
     expect(call.q).toContain("name contains 'budget'");
@@ -83,7 +81,7 @@ describe("searchFiles", () => {
       },
     });
 
-    const result = await searchFiles("budget");
+    const result = await searchFiles(mockAuth, "budget");
 
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe("file1");
@@ -93,7 +91,7 @@ describe("searchFiles", () => {
   it("returns empty array when no files match", async () => {
     mockFilesList.mockResolvedValue({ data: {} });
 
-    const result = await searchFiles("nothing");
+    const result = await searchFiles(mockAuth, "nothing");
 
     expect(result).toEqual([]);
   });
@@ -101,7 +99,7 @@ describe("searchFiles", () => {
   it("passes maxResults option", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [] } });
 
-    await searchFiles("budget", { maxResults: 20 });
+    await searchFiles(mockAuth, "budget", { maxResults: 20 });
 
     expect(mockFilesList).toHaveBeenCalledWith(
       expect.objectContaining({ pageSize: 20 }),
@@ -113,7 +111,7 @@ describe("listRecentFiles", () => {
   it("orders by viewedByMeTime desc", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [makeFile()] } });
 
-    await listRecentFiles();
+    await listRecentFiles(mockAuth);
 
     expect(mockFilesList).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: "viewedByMeTime desc" }),
@@ -123,7 +121,7 @@ describe("listRecentFiles", () => {
   it("uses default maxResults of 20", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [] } });
 
-    await listRecentFiles();
+    await listRecentFiles(mockAuth);
 
     expect(mockFilesList).toHaveBeenCalledWith(
       expect.objectContaining({ pageSize: 20 }),
@@ -133,7 +131,7 @@ describe("listRecentFiles", () => {
   it("accepts custom maxResults", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [] } });
 
-    await listRecentFiles(10);
+    await listRecentFiles(mockAuth, 10);
 
     expect(mockFilesList).toHaveBeenCalledWith(
       expect.objectContaining({ pageSize: 10 }),
@@ -143,7 +141,7 @@ describe("listRecentFiles", () => {
   it("excludes trashed files", async () => {
     mockFilesList.mockResolvedValue({ data: { files: [] } });
 
-    await listRecentFiles();
+    await listRecentFiles(mockAuth);
 
     const call = mockFilesList.mock.calls[0][0];
     expect(call.q).toContain("trashed = false");
@@ -154,7 +152,7 @@ describe("readDocument", () => {
   it("exports file as text/plain", async () => {
     mockFilesExport.mockResolvedValue({ data: "Document content here" });
 
-    await readDocument("file1");
+    await readDocument(mockAuth, "file1");
 
     expect(mockFilesExport).toHaveBeenCalledWith({
       fileId: "file1",
@@ -165,7 +163,7 @@ describe("readDocument", () => {
   it("returns document text", async () => {
     mockFilesExport.mockResolvedValue({ data: "Document content here" });
 
-    const result = await readDocument("file1");
+    const result = await readDocument(mockAuth, "file1");
 
     expect(result).toBe("Document content here");
   });
@@ -174,7 +172,7 @@ describe("readDocument", () => {
     const error = { status: 403, message: "Export file size exceeds limit" };
     mockFilesExport.mockRejectedValue(error);
 
-    await expect(readDocument("largeFile")).rejects.toThrow(
+    await expect(readDocument(mockAuth, "largeFile")).rejects.toThrow(
       /10MB|too large|export limit/i,
     );
   });
@@ -183,7 +181,7 @@ describe("readDocument", () => {
     const error = { status: 404, message: "File not found" };
     mockFilesExport.mockRejectedValue(error);
 
-    await expect(readDocument("missingFile")).rejects.toMatchObject({ status: 404 });
+    await expect(readDocument(mockAuth, "missingFile")).rejects.toMatchObject({ status: 404 });
   });
 });
 
@@ -191,7 +189,7 @@ describe("getFileMetadata", () => {
   it("calls files.get with standard metadata fields", async () => {
     mockFilesGet.mockResolvedValue({ data: makeFile() });
 
-    await getFileMetadata("file1");
+    await getFileMetadata(mockAuth, "file1");
 
     expect(mockFilesGet).toHaveBeenCalledWith({
       fileId: "file1",
@@ -202,7 +200,7 @@ describe("getFileMetadata", () => {
   it("returns file metadata", async () => {
     mockFilesGet.mockResolvedValue({ data: makeFile() });
 
-    const result = await getFileMetadata("file1");
+    const result = await getFileMetadata(mockAuth, "file1");
 
     expect(result.id).toBe("file1");
     expect(result.name).toBe("Budget Q4");

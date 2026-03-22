@@ -1,5 +1,6 @@
 import {
   boolean,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -10,13 +11,28 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-export const buckets = pgTable("buckets", {
+export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull().unique(),
-  description: text("description").notNull(),
-  sort_order: integer("sort_order").notNull().default(0),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  avatar_url: text("avatar_url"),
   created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const buckets = pgTable(
+  "buckets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    user_id: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    sort_order: integer("sort_order").notNull().default(0),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("buckets_user_id_name_idx").on(table.user_id, table.name)],
+);
 
 // Pre-defined starter bucket sets; user picks one on first launch.
 export const bucketTemplates = pgTable("bucket_templates", {
@@ -26,11 +42,11 @@ export const bucketTemplates = pgTable("bucket_templates", {
   buckets: jsonb("buckets").notNull(), // Array<{ name, description, sort_order }>
 });
 
-// Single row with fixed PK ('primary') so upsert always targets the same row.
+// One row per user — keyed by user_id instead of fixed 'primary'.
 export const googleTokens = pgTable("google_tokens", {
-  id: text("id")
+  user_id: uuid("user_id")
     .primaryKey()
-    .$default(() => "primary"),
+    .references(() => users.id),
   access_token: text("access_token").notNull(),
   refresh_token: text("refresh_token").notNull(),
   scope: text("scope").notNull(),
@@ -45,6 +61,9 @@ export const emailThreads = pgTable(
   "email_threads",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    user_id: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
     gmail_thread_id: text("gmail_thread_id").notNull(),
     subject: text("subject"),
     snippet: text("snippet"),
@@ -56,18 +75,21 @@ export const emailThreads = pgTable(
     gmail_history_id: text("gmail_history_id"),
     synced_at: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("email_threads_gmail_thread_id_idx").on(table.gmail_thread_id)],
+  (table) => [
+    uniqueIndex("email_threads_user_gmail_thread_idx").on(table.user_id, table.gmail_thread_id),
+  ],
 );
 
-// Individual messages within threads. Used for richer classification context.
+// Individual messages within threads.
 export const emailMessages = pgTable(
   "email_messages",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    gmail_message_id: text("gmail_message_id").notNull(),
-    gmail_thread_id: text("gmail_thread_id")
+    user_id: uuid("user_id")
       .notNull()
-      .references(() => emailThreads.gmail_thread_id, { onDelete: "cascade" }),
+      .references(() => users.id),
+    gmail_message_id: text("gmail_message_id").notNull(),
+    gmail_thread_id: text("gmail_thread_id").notNull(),
     from_email: text("from_email"),
     from_name: text("from_name"),
     to_emails: jsonb("to_emails"), // string[]
@@ -78,8 +100,15 @@ export const emailMessages = pgTable(
     synced_at: timestamp("synced_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("email_messages_gmail_message_id_idx").on(table.gmail_message_id),
+    uniqueIndex("email_messages_user_gmail_message_id_idx").on(
+      table.user_id,
+      table.gmail_message_id,
+    ),
     index("email_messages_thread_idx").on(table.gmail_thread_id),
+    foreignKey({
+      columns: [table.user_id, table.gmail_thread_id],
+      foreignColumns: [emailThreads.user_id, emailThreads.gmail_thread_id],
+    }).onDelete("cascade"),
   ],
 );
 
@@ -87,9 +116,10 @@ export const threadBuckets = pgTable(
   "thread_buckets",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    gmail_thread_id: text("gmail_thread_id")
+    user_id: uuid("user_id")
       .notNull()
-      .references(() => emailThreads.gmail_thread_id, { onDelete: "cascade" }),
+      .references(() => users.id),
+    gmail_thread_id: text("gmail_thread_id").notNull(),
     bucket_id: uuid("bucket_id")
       .notNull()
       .references(() => buckets.id, { onDelete: "cascade" }),
@@ -98,12 +128,21 @@ export const threadBuckets = pgTable(
     needs_rebucket: boolean("needs_rebucket").notNull().default(false),
     assigned_at: timestamp("assigned_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("thread_buckets_gmail_thread_id_idx").on(table.gmail_thread_id)],
+  (table) => [
+    uniqueIndex("thread_buckets_user_gmail_thread_idx").on(table.user_id, table.gmail_thread_id),
+    foreignKey({
+      columns: [table.user_id, table.gmail_thread_id],
+      foreignColumns: [emailThreads.user_id, emailThreads.gmail_thread_id],
+    }).onDelete("cascade"),
+  ],
 );
 
 // Each conversation maps to one Agent SDK session.
 export const conversations = pgTable("conversations", {
   id: uuid("id").defaultRandom().primaryKey(),
+  user_id: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
   title: text("title").notNull(),
   sdk_session_id: text("sdk_session_id"),
   created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

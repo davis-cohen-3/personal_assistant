@@ -9,8 +9,8 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ZodError } from "zod";
 import { handleWebSocket } from "./agent.js";
 import { authMiddleware, googleAuthRoutes } from "./auth.js";
+import type { AppEnv } from "./env.js";
 import { AppError } from "./exceptions.js";
-import { loadTokens } from "./google/index.js";
 import { apiRoutes } from "./routes.js";
 
 const REQUIRED_ENV = [
@@ -20,7 +20,6 @@ const REQUIRED_ENV = [
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "GOOGLE_REDIRECT_URI",
-  "ALLOWED_USERS",
   "ANTHROPIC_API_KEY",
   "ENCRYPTION_KEY",
 ];
@@ -28,7 +27,7 @@ for (const key of REQUIRED_ENV) {
   if (!process.env[key]) throw new Error(`Missing required env var: ${key}`);
 }
 
-const app = new Hono();
+const app = new Hono<AppEnv>();
 
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
@@ -99,11 +98,6 @@ const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
 }) as Server;
 
 injectWebSocket(server);
-
-// Load persisted Google tokens and agent skills on startup
-loadTokens().catch((err) => {
-  console.error("Failed to load Google tokens at startup", { error: err });
-});
 
 function shutdown() {
   console.info("Shutting down...");

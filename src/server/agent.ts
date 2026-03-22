@@ -9,6 +9,7 @@ import {
   listMessagesByConversation,
   updateConversation,
 } from "./db/queries.js";
+import type { AppEnv } from "./env.js";
 import { createCustomMcpServer } from "./tools.js";
 
 const SYSTEM_PROMPT = `You are a personal assistant that helps manage email, calendar, and drive.
@@ -116,12 +117,13 @@ const IncomingMessage = z.object({
 
 export async function streamQuery(
   ws: WSContext,
+  userId: string,
   conversationId: string,
   prompt: string,
   sessionId?: string,
   abortController?: AbortController,
 ): Promise<void> {
-  const mcpServer = createCustomMcpServer();
+  const mcpServer = createCustomMcpServer(userId);
   let capturedSessionId: string | undefined;
   let fullText = "";
 
@@ -235,17 +237,18 @@ export async function streamQuery(
   }
 
   if (capturedSessionId) {
-    await updateConversation(conversationId, {
+    await updateConversation(userId, conversationId, {
       sdk_session_id: capturedSessionId,
     });
   }
   if (fullText) {
-    await createChatMessage(conversationId, "assistant", fullText);
+    await createChatMessage(userId, conversationId, "assistant", fullText);
   }
   ws.send(JSON.stringify({ type: "text_done", content: fullText }));
 }
 
-export function handleWebSocket(c: Context): WSEvents {
+export function handleWebSocket(c: Context<AppEnv>): WSEvents {
+  const userId = c.get("userId") as string;
   const conversationId = new URL(c.req.url).searchParams.get("conversationId");
   let processing = false;
   let activeAbort: AbortController | undefined;
@@ -282,26 +285,26 @@ export function handleWebSocket(c: Context): WSEvents {
 
       processing = true;
       try {
-        const conversation = await getConversation(conversationId);
+        const conversation = await getConversation(userId, conversationId);
         if (!conversation) {
           ws.send(JSON.stringify({ type: "error", message: "Conversation not found" }));
           return;
         }
 
-        await createChatMessage(conversationId, "user", msg.content);
+        await createChatMessage(userId, conversationId, "user", msg.content);
 
-        const messages = await listMessagesByConversation(conversationId);
+        const messages = await listMessagesByConversation(userId, conversationId);
         const userMessages = messages.filter((m) => m.role === "user");
         if (userMessages.length === 1) {
           const title = msg.content.slice(0, 80);
-          await updateConversation(conversationId, { title });
+          await updateConversation(userId, conversationId, { title });
           ws.send(JSON.stringify({ type: "conversation_updated", conversationId, title }));
         }
 
         const sessionId =
           conversation.sdk_session_id !== null ? conversation.sdk_session_id : undefined;
         activeAbort = new AbortController();
-        await streamQuery(ws, conversationId, msg.content, sessionId, activeAbort);
+        await streamQuery(ws, userId, conversationId, msg.content, sessionId, activeAbort);
       } catch (err) {
         console.error("Agent error", { conversationId, error: err });
         ws.send(JSON.stringify({ type: "error", message: "Agent error — check server logs" }));

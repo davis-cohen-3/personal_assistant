@@ -68,10 +68,6 @@ vi.mock("mimetext", () => ({
   createMimeMessage: vi.fn(() => mockMimeMsg),
 }));
 
-vi.mock("../../../src/server/google/auth.js", () => ({
-  getAuthClient: vi.fn(() => ({})),
-}));
-
 import type { EmailAttachment } from "../../../src/server/google/gmail.js";
 import {
   trashThread,
@@ -85,6 +81,8 @@ import {
   searchThreads,
   sendMessage,
 } from "../../../src/server/google/gmail.js";
+
+const mockAuth = {} as never;
 
 const makePayload = (text: string, html?: string) => ({
   mimeType: "multipart/alternative",
@@ -124,7 +122,7 @@ describe("getMessage", () => {
   it("calls messages.get with format full", async () => {
     mockMessagesGet.mockResolvedValue(makeMessage());
 
-    await getMessage("msg1");
+    await getMessage(mockAuth, "msg1");
 
     expect(mockMessagesGet).toHaveBeenCalledWith({
       userId: "me",
@@ -136,7 +134,7 @@ describe("getMessage", () => {
   it("returns decoded message with headers", async () => {
     mockMessagesGet.mockResolvedValue(makeMessage());
 
-    const result = await getMessage("msg1");
+    const result = await getMessage(mockAuth, "msg1");
 
     expect(result.id).toBe("msg1");
     expect(result.threadId).toBe("thread1");
@@ -148,7 +146,7 @@ describe("getMessage", () => {
   it("decodes base64url body text", async () => {
     mockMessagesGet.mockResolvedValue(makeMessage());
 
-    const result = await getMessage("msg1");
+    const result = await getMessage(mockAuth, "msg1");
 
     expect(result.bodyText).toBe("Hello world");
   });
@@ -156,7 +154,7 @@ describe("getMessage", () => {
   it("decodes base64url body html", async () => {
     mockMessagesGet.mockResolvedValue(makeMessage());
 
-    const result = await getMessage("msg1");
+    const result = await getMessage(mockAuth, "msg1");
 
     expect(result.bodyHtml).toBe("<p>Hello world</p>");
   });
@@ -182,7 +180,7 @@ describe("getMessage", () => {
       },
     });
 
-    const result = await getMessage("msg2");
+    const result = await getMessage(mockAuth, "msg2");
 
     expect(result.bodyText).toBe("Just text");
     expect(result.bodyHtml).toBe("");
@@ -219,7 +217,7 @@ describe("getMessage", () => {
       },
     });
 
-    const result = await getMessage("msg3");
+    const result = await getMessage(mockAuth, "msg3");
 
     expect(result.bodyText).toBe("Nested body");
   });
@@ -231,7 +229,7 @@ describe("getThread", () => {
       data: { id: "thread1", messages: [makeMessage().data] },
     });
 
-    await getThread("thread1");
+    await getThread(mockAuth, "thread1");
 
     expect(mockThreadsGet).toHaveBeenCalledWith({
       userId: "me",
@@ -245,7 +243,7 @@ describe("getThread", () => {
       data: { id: "thread1", messages: [makeMessage().data] },
     });
 
-    const result = await getThread("thread1");
+    const result = await getThread(mockAuth, "thread1");
 
     expect(result.id).toBe("thread1");
     expect(result.messages).toHaveLength(1);
@@ -259,7 +257,7 @@ describe("searchThreads", () => {
       data: { threads: [{ id: "t1", snippet: "result", historyId: "123" }] },
     });
 
-    await searchThreads("is:unread", 10);
+    await searchThreads(mockAuth, "is:unread", 10);
 
     expect(mockThreadsList).toHaveBeenCalledWith({
       userId: "me",
@@ -278,7 +276,7 @@ describe("searchThreads", () => {
       },
     });
 
-    const result = await searchThreads("from:alice", 5);
+    const result = await searchThreads(mockAuth, "from:alice", 5);
 
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe("t1");
@@ -288,7 +286,7 @@ describe("searchThreads", () => {
   it("returns empty array when no threads match", async () => {
     mockThreadsList.mockResolvedValue({ data: {} });
 
-    const result = await searchThreads("from:nobody", 10);
+    const result = await searchThreads(mockAuth, "from:nobody", 10);
 
     expect(result).toEqual([]);
   });
@@ -296,14 +294,14 @@ describe("searchThreads", () => {
 
 describe("sendMessage", () => {
   it("fetches sender profile and sets it on message", async () => {
-    await sendMessage("to@example.com", "Subject", "Body");
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(mockGetProfile).toHaveBeenCalledWith({ userId: "me" });
     expect(mockMimeMsg.setSender).toHaveBeenCalledWith({ addr: "me@example.com" });
   });
 
   it("calls messages.send with base64url encoded raw", async () => {
-    await sendMessage("to@example.com", "Subject", "Body");
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(mockMessagesSend).toHaveBeenCalledWith({
       userId: "me",
@@ -314,7 +312,7 @@ describe("sendMessage", () => {
   });
 
   it("sets subject and recipient on mime message", async () => {
-    await sendMessage("to@example.com", "Subject", "Body");
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(mockMimeMsg.setSubject).toHaveBeenCalledWith("Subject");
     expect(mockMimeMsg.setRecipient).toHaveBeenCalledWith("to@example.com");
@@ -323,7 +321,7 @@ describe("sendMessage", () => {
   it("throws if profile has no emailAddress", async () => {
     mockGetProfile.mockResolvedValue({ data: {} });
 
-    await expect(sendMessage("to@example.com", "Subject", "Body")).rejects.toThrow();
+    await expect(sendMessage(mockAuth, "to@example.com", "Subject", "Body")).rejects.toThrow();
   });
 });
 
@@ -341,7 +339,7 @@ describe("replyToThread", () => {
       },
     });
 
-    await replyToThread("thread1", "msg1", "Reply body");
+    await replyToThread(mockAuth, "thread1", "msg1", "Reply body");
 
     expect(mockMessagesGet).toHaveBeenCalledWith({
       userId: "me",
@@ -363,7 +361,7 @@ describe("replyToThread", () => {
       },
     });
 
-    await replyToThread("thread1", "msg1", "Reply body");
+    await replyToThread(mockAuth, "thread1", "msg1", "Reply body");
 
     expect(mockMimeMsg.setHeader).toHaveBeenCalledWith(
       "In-Reply-To",
@@ -384,7 +382,7 @@ describe("replyToThread", () => {
       },
     });
 
-    await replyToThread("thread1", "msg1", "Reply body");
+    await replyToThread(mockAuth, "thread1", "msg1", "Reply body");
 
     expect(mockMessagesSend).toHaveBeenCalledWith({
       userId: "me",
@@ -397,7 +395,7 @@ describe("createDraft", () => {
   it("calls drafts.create with message raw", async () => {
     mockDraftsCreate.mockResolvedValue({ data: { id: "draft1" } });
 
-    await createDraft("to@example.com", "Draft Subject", "Draft body");
+    await createDraft(mockAuth, "to@example.com", "Draft Subject", "Draft body");
 
     expect(mockDraftsCreate).toHaveBeenCalledWith({
       userId: "me",
@@ -410,7 +408,7 @@ describe("createDraft", () => {
   it("includes threadId when provided", async () => {
     mockDraftsCreate.mockResolvedValue({ data: { id: "draft1" } });
 
-    await createDraft("to@example.com", "Subject", "Body", "thread1");
+    await createDraft(mockAuth, "to@example.com", "Subject", "Body", "thread1");
 
     expect(mockDraftsCreate).toHaveBeenCalledWith({
       userId: "me",
@@ -423,7 +421,7 @@ describe("createDraft", () => {
   it("returns draft id", async () => {
     mockDraftsCreate.mockResolvedValue({ data: { id: "draft1" } });
 
-    const result = await createDraft("to@example.com", "Subject", "Body");
+    const result = await createDraft(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(result).toBe("draft1");
   });
@@ -433,7 +431,7 @@ describe("modifyLabels", () => {
   it("calls messages.modify with add and remove label ids", async () => {
     mockMessagesModify.mockResolvedValue({ data: {} });
 
-    await modifyLabels("msg1", ["STARRED"], ["UNREAD"]);
+    await modifyLabels(mockAuth, "msg1", ["STARRED"], ["UNREAD"]);
 
     expect(mockMessagesModify).toHaveBeenCalledWith({
       userId: "me",
@@ -450,7 +448,7 @@ describe("markAsRead", () => {
   it("removes UNREAD label", async () => {
     mockMessagesModify.mockResolvedValue({ data: {} });
 
-    await markAsRead("msg1");
+    await markAsRead(mockAuth, "msg1");
 
     expect(mockMessagesModify).toHaveBeenCalledWith({
       userId: "me",
@@ -467,7 +465,7 @@ describe("trashThread", () => {
   it("calls threads.trash", async () => {
     mockThreadsTrash.mockResolvedValue({ data: {} });
 
-    await trashThread("thread1");
+    await trashThread(mockAuth, "thread1");
 
     expect(mockThreadsTrash).toHaveBeenCalledWith({
       userId: "me",
@@ -487,7 +485,7 @@ describe("listLabels", () => {
       },
     });
 
-    const result = await listLabels();
+    const result = await listLabels(mockAuth);
 
     expect(mockLabelsList).toHaveBeenCalledWith({ userId: "me" });
     expect(result).toHaveLength(2);
@@ -497,7 +495,7 @@ describe("listLabels", () => {
   it("returns empty array when no labels", async () => {
     mockLabelsList.mockResolvedValue({ data: {} });
 
-    const result = await listLabels();
+    const result = await listLabels(mockAuth);
 
     expect(result).toEqual([]);
   });
@@ -513,7 +511,7 @@ describe("sendMessage attachments", () => {
       },
     ];
 
-    await sendMessage("to@example.com", "Subject", "Body", { attachments });
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body", { attachments });
 
     expect(mockMimeMsg.addAttachment).toHaveBeenCalledWith({
       filename: "report.pdf",
@@ -528,14 +526,14 @@ describe("sendMessage attachments", () => {
       { filename: "note.txt", contentType: "text/plain", data: Buffer.from(content) },
     ];
 
-    await sendMessage("to@example.com", "Subject", "Body", { attachments });
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body", { attachments });
 
     const call = mockMimeMsg.addAttachment.mock.calls[0][0];
     expect(call.data).toBe(Buffer.from(content).toString("base64"));
   });
 
   it("does not call addAttachment when no attachments provided", async () => {
-    await sendMessage("to@example.com", "Subject", "Body");
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(mockMimeMsg.addAttachment).not.toHaveBeenCalled();
   });
@@ -548,7 +546,7 @@ describe("createDraft attachments", () => {
       { filename: "doc.pdf", contentType: "application/pdf", data: Buffer.from("data") },
     ];
 
-    await createDraft("to@example.com", "Subject", "Body", undefined, { attachments });
+    await createDraft(mockAuth, "to@example.com", "Subject", "Body", undefined, { attachments });
 
     expect(mockMimeMsg.addAttachment).toHaveBeenCalledWith(
       expect.objectContaining({ filename: "doc.pdf" }),
@@ -558,7 +556,7 @@ describe("createDraft attachments", () => {
 
 describe("uses asEncoded for Gmail API raw field", () => {
   it("calls asEncoded() to produce the raw field for sendMessage", async () => {
-    await sendMessage("to@example.com", "Subject", "Body");
+    await sendMessage(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(mockMimeMsg.asEncoded).toHaveBeenCalled();
   });
@@ -576,7 +574,7 @@ describe("uses asEncoded for Gmail API raw field", () => {
       },
     });
 
-    await replyToThread("thread1", "msg1", "body");
+    await replyToThread(mockAuth, "thread1", "msg1", "body");
 
     expect(mockMimeMsg.asEncoded).toHaveBeenCalled();
   });
@@ -584,7 +582,7 @@ describe("uses asEncoded for Gmail API raw field", () => {
   it("calls asEncoded() for createDraft", async () => {
     mockDraftsCreate.mockResolvedValue({ data: { id: "draft1" } });
 
-    await createDraft("to@example.com", "Subject", "Body");
+    await createDraft(mockAuth, "to@example.com", "Subject", "Body");
 
     expect(mockMimeMsg.asEncoded).toHaveBeenCalled();
   });

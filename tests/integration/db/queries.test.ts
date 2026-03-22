@@ -9,6 +9,7 @@ import {
   conversations,
   emailThreads,
   threadBuckets,
+  users,
 } from "../../../src/server/db/schema.js";
 import {
   applyBucketTemplate,
@@ -17,16 +18,21 @@ import {
   createChatMessage,
   createConversation,
   upsertEmailThread,
+  upsertUser,
 } from "../../../src/server/db/queries.js";
+
+let testUserId: string;
 
 async function cleanDatabase() {
   await db.execute(
-    `TRUNCATE TABLE chat_messages, conversations, thread_buckets, email_messages, email_threads, buckets, bucket_templates, google_tokens CASCADE`,
+    `TRUNCATE TABLE chat_messages, conversations, thread_buckets, email_messages, email_threads, buckets, bucket_templates, google_tokens, users CASCADE`,
   );
 }
 
 beforeEach(async () => {
   await cleanDatabase();
+  const user = await upsertUser("test@example.com", "Test User");
+  testUserId = user.id;
 });
 
 afterAll(async () => {
@@ -47,7 +53,7 @@ describe("applyBucketTemplate", () => {
       })
       .returning();
 
-    await applyBucketTemplate(template.id);
+    await applyBucketTemplate(testUserId, template.id);
 
     const created = await db.select().from(buckets);
     expect(created).toHaveLength(2);
@@ -64,12 +70,12 @@ describe("applyBucketTemplate", () => {
       })
       .returning();
 
-    await db.insert(buckets).values({ name: "Existing", description: "pre-existing", sort_order: 0 });
+    await db.insert(buckets).values({ name: "Existing", description: "pre-existing", sort_order: 0, user_id: testUserId });
 
-    await expect(applyBucketTemplate(template.id)).rejects.toMatchObject({
+    await expect(applyBucketTemplate(testUserId, template.id)).rejects.toMatchObject({
       status: 409,
     });
-    await expect(applyBucketTemplate(template.id)).rejects.toBeInstanceOf(AppError);
+    await expect(applyBucketTemplate(testUserId, template.id)).rejects.toBeInstanceOf(AppError);
   });
 });
 
@@ -77,19 +83,19 @@ describe("createChatMessage", () => {
   it("updates conversations.updated_at after insert", async () => {
     const [conv] = await db
       .insert(conversations)
-      .values({ title: "Test", updated_at: new Date("2020-01-01T00:00:00Z") })
+      .values({ title: "Test", updated_at: new Date("2020-01-01T00:00:00Z"), user_id: testUserId })
       .returning();
 
-    await createChatMessage(conv.id, "user", "Hello");
+    await createChatMessage(testUserId, conv.id, "user", "Hello");
 
     const [updated] = await db.select().from(conversations).where(eq(conversations.id, conv.id));
     expect(updated.updated_at.getTime()).toBeGreaterThan(new Date("2020-01-01T00:00:00Z").getTime());
   });
 
   it("persists the message", async () => {
-    const [conv] = await db.insert(conversations).values({ title: "Test" }).returning();
+    const [conv] = await db.insert(conversations).values({ title: "Test", user_id: testUserId }).returning();
 
-    const msg = await createChatMessage(conv.id, "user", "Hello world");
+    const msg = await createChatMessage(testUserId, conv.id, "user", "Hello world");
 
     expect(msg.content).toBe("Hello world");
     expect(msg.role).toBe("user");
@@ -107,15 +113,15 @@ describe("assignThreadsBatch", () => {
   it("inserts all assignments within batch limit", async () => {
     const [bucket] = await db
       .insert(buckets)
-      .values({ name: "Inbox", description: "test", sort_order: 0 })
+      .values({ name: "Inbox", description: "test", sort_order: 0, user_id: testUserId })
       .returning();
 
     const threadIds = ["t1", "t2", "t3"];
     for (const tid of threadIds) {
-      await db.insert(emailThreads).values({ gmail_thread_id: tid, message_count: 1 });
+      await db.insert(emailThreads).values({ gmail_thread_id: tid, message_count: 1, user_id: testUserId });
     }
 
-    await assignThreadsBatch(threadIds.map((id) => ({ gmailThreadId: id, bucketId: bucket.id })));
+    await assignThreadsBatch(testUserId, threadIds.map((id) => ({ gmailThreadId: id, bucketId: bucket.id })));
 
     const rows = await db.select().from(threadBuckets);
     expect(rows).toHaveLength(3);
@@ -127,13 +133,13 @@ describe("assignThreadsBatch", () => {
       bucketId: "00000000-0000-0000-0000-000000000000",
     }));
 
-    await expect(assignThreadsBatch(assignments)).rejects.toBeInstanceOf(AppError);
+    await expect(assignThreadsBatch(testUserId, assignments)).rejects.toBeInstanceOf(AppError);
   });
 });
 
 describe("upsertEmailThread", () => {
   it("inserts new thread", async () => {
-    await upsertEmailThread({ gmail_thread_id: "abc123", subject: "Hello", message_count: 1 });
+    await upsertEmailThread(testUserId, { gmail_thread_id: "abc123", subject: "Hello", message_count: 1 });
 
     const rows = await db.select().from(emailThreads);
     expect(rows).toHaveLength(1);
@@ -141,8 +147,8 @@ describe("upsertEmailThread", () => {
   });
 
   it("updates existing thread on conflict", async () => {
-    await upsertEmailThread({ gmail_thread_id: "abc123", subject: "First", message_count: 1 });
-    await upsertEmailThread({ gmail_thread_id: "abc123", subject: "Updated", message_count: 2 });
+    await upsertEmailThread(testUserId, { gmail_thread_id: "abc123", subject: "First", message_count: 1 });
+    await upsertEmailThread(testUserId, { gmail_thread_id: "abc123", subject: "Updated", message_count: 2 });
 
     const rows = await db.select().from(emailThreads);
     expect(rows).toHaveLength(1);
@@ -155,16 +161,16 @@ describe("assignThread", () => {
   it("moves thread to new bucket on second assignment", async () => {
     const [b1] = await db
       .insert(buckets)
-      .values({ name: "Bucket A", description: "a", sort_order: 0 })
+      .values({ name: "Bucket A", description: "a", sort_order: 0, user_id: testUserId })
       .returning();
     const [b2] = await db
       .insert(buckets)
-      .values({ name: "Bucket B", description: "b", sort_order: 1 })
+      .values({ name: "Bucket B", description: "b", sort_order: 1, user_id: testUserId })
       .returning();
-    await db.insert(emailThreads).values({ gmail_thread_id: "thread-x", message_count: 1 });
+    await db.insert(emailThreads).values({ gmail_thread_id: "thread-x", message_count: 1, user_id: testUserId });
 
-    await assignThread("thread-x", b1.id);
-    await assignThread("thread-x", b2.id);
+    await assignThread(testUserId, "thread-x", b1.id);
+    await assignThread(testUserId, "thread-x", b2.id);
 
     const rows = await db.select().from(threadBuckets);
     expect(rows).toHaveLength(1);
@@ -174,7 +180,7 @@ describe("assignThread", () => {
 
 describe("createConversation", () => {
   it("returns a conversation with the given title", async () => {
-    const conv = await createConversation("My convo");
+    const conv = await createConversation(testUserId, "My convo");
     expect(conv.title).toBe("My convo");
     expect(conv.id).toBeTruthy();
   });

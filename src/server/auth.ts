@@ -4,11 +4,9 @@ import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
 import { sign, verify } from "hono/jwt";
+import { upsertUser } from "./db/queries.js";
+import type { AppEnv } from "./env.js";
 import { getAuthClient, isGoogleConnected, persistTokens } from "./google/auth.js";
-
-const rawAllowedUsers = process.env.ALLOWED_USERS;
-if (!rawAllowedUsers) throw new Error("Missing required env var: ALLOWED_USERS");
-const ALLOWED_USERS = rawAllowedUsers.split(",").map((e) => e.trim().toLowerCase());
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) throw new Error("Missing required env var: JWT_SECRET");
@@ -16,7 +14,7 @@ if (!JWT_SECRET) throw new Error("Missing required env var: JWT_SECRET");
 const CSRF_SECRET = process.env.CSRF_SECRET;
 if (!CSRF_SECRET) throw new Error("Missing required env var: CSRF_SECRET");
 
-export const googleAuthRoutes = new Hono();
+export const googleAuthRoutes = new Hono<AppEnv>();
 
 // Initiate Google OAuth — login + API scopes in one step
 googleAuthRoutes.get("/google", (c) => {
@@ -36,7 +34,7 @@ googleAuthRoutes.get("/google", (c) => {
   return c.redirect(url);
 });
 
-// OAuth callback — verify allowlist, set session cookie, redirect to app
+// OAuth callback — create/update user, set session cookie, redirect to app
 googleAuthRoutes.get("/google/callback", async (c) => {
   const error = c.req.query("error");
   if (error) {
@@ -58,15 +56,19 @@ googleAuthRoutes.get("/google/callback", async (c) => {
     const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
     const { data } = await oauth2.userinfo.get();
     const email = data.email?.toLowerCase();
-
-    if (!email || !ALLOWED_USERS.includes(email)) {
-      return c.json({ error: "Not authorized. Contact the admin." }, 403);
+    if (!email) {
+      return c.redirect("/?auth_error=oauth_failed");
     }
 
-    await persistTokens(tokens);
+    const user = await upsertUser(email, data.name ?? undefined, data.picture ?? undefined);
+    await persistTokens(user.id, tokens);
 
     const token = await sign(
-      { email, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30 },
+      {
+        userId: user.id,
+        email,
+        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
+      },
       JWT_SECRET,
       "HS256",
     );
@@ -96,11 +98,22 @@ googleAuthRoutes.get("/status", async (c) => {
   const session = getCookie(c, "session");
   if (!session) return c.json({ authenticated: false });
   try {
-    await verify(session, JWT_SECRET, "HS256");
-    const googleConnected = await isGoogleConnected();
+    const payload = await verify(session, JWT_SECRET, "HS256");
+    if (typeof payload.userId !== "string" || !payload.userId) {
+      return c.json({ authenticated: false });
+    }
+    if (typeof payload.email !== "string" || !payload.email) {
+      return c.json({ authenticated: false });
+    }
+    const googleConnected = await isGoogleConnected(payload.userId);
     // CSRF token: HMAC of the session JWT using CSRF_SECRET (HIGH-9)
     const csrfToken = crypto.createHmac("sha256", CSRF_SECRET).update(session).digest("hex");
-    return c.json({ authenticated: true, csrfToken, googleConnected });
+    return c.json({
+      authenticated: true,
+      csrfToken,
+      googleConnected,
+      email: payload.email,
+    });
   } catch (err) {
     console.error("Session verification failed", { error: err });
     return c.json({ authenticated: false });
@@ -108,12 +121,19 @@ googleAuthRoutes.get("/status", async (c) => {
 });
 
 // Auth middleware — cookie-only, enforces CSRF on state-changing methods
-export const authMiddleware = createMiddleware(async (c, next) => {
+export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const session = getCookie(c, "session");
   if (!session) return c.json({ error: "Unauthorized" }, 401);
 
   try {
     const payload = await verify(session, JWT_SECRET, "HS256");
+    if (typeof payload.userId !== "string" || !payload.userId) {
+      return c.json({ error: "Invalid session" }, 401);
+    }
+    if (typeof payload.email !== "string" || !payload.email) {
+      return c.json({ error: "Invalid session" }, 401);
+    }
+    c.set("userId", payload.userId);
     c.set("userEmail", payload.email);
   } catch (err) {
     console.error("Auth middleware: session verification failed", { error: err });

@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
 import * as queries from "./db/queries.js";
+import { withUserTokens } from "./google/auth.js";
 import type { GmailMessage, GmailThread } from "./google/gmail.js";
 import * as gmail from "./google/gmail.js";
 
@@ -59,12 +60,16 @@ function toMessageRecords(messages: GmailMessage[]) {
   });
 }
 
-export async function syncInbox(maxResults?: number): Promise<{ new: number; updated: number }> {
+export async function syncInbox(
+  userId: string,
+  maxResults?: number,
+): Promise<{ new: number; updated: number }> {
+  const auth = await withUserTokens(userId);
   const syncLimit = maxResults ?? DEFAULT_SYNC_LIMIT;
-  const gmailThreads = await gmail.searchThreads("is:inbox", syncLimit);
+  const gmailThreads = await gmail.searchThreads(auth, "is:inbox", syncLimit);
 
   const gmailIds = gmailThreads.map((t) => t.id);
-  const existing = await queries.listEmailThreadsByGmailIds(gmailIds);
+  const existing = await queries.listEmailThreadsByGmailIds(userId, gmailIds);
   const existingMap = new Map(existing.map((t) => [t.gmail_thread_id, t]));
 
   let newCount = 0;
@@ -80,9 +85,9 @@ export async function syncInbox(maxResults?: number): Promise<{ new: number; upd
       limit(async () => {
         const local = existingMap.get(thread.id);
         const isNew = !local;
-        const full = await gmail.getThread(thread.id);
-        await queries.upsertEmailThread(toThreadRecord(full, thread.snippet));
-        await queries.upsertEmailMessages(toMessageRecords(full.messages));
+        const full = await gmail.getThread(auth, thread.id);
+        await queries.upsertEmailThread(userId, toThreadRecord(full, thread.snippet));
+        await queries.upsertEmailMessages(userId, toMessageRecords(full.messages));
         isNew ? newCount++ : updatedCount++;
       }),
     ),
@@ -91,66 +96,85 @@ export async function syncInbox(maxResults?: number): Promise<{ new: number; upd
   return { new: newCount, updated: updatedCount };
 }
 
-export async function search(query: string, maxResults?: number) {
+export async function search(userId: string, query: string, maxResults?: number) {
+  const auth = await withUserTokens(userId);
   const resultLimit = Math.min(maxResults ?? BATCH_SIZE, BATCH_SIZE);
-  const gmailThreads = await gmail.searchThreads(query, resultLimit);
+  const gmailThreads = await gmail.searchThreads(auth, query, resultLimit);
 
   await Promise.all(
     gmailThreads.map((thread) =>
       limit(async () => {
-        const full = await gmail.getThread(thread.id);
-        await queries.upsertEmailThread(toThreadRecord(full, thread.snippet));
-        await queries.upsertEmailMessages(toMessageRecords(full.messages));
+        const full = await gmail.getThread(auth, thread.id);
+        await queries.upsertEmailThread(userId, toThreadRecord(full, thread.snippet));
+        await queries.upsertEmailMessages(userId, toMessageRecords(full.messages));
       }),
     ),
   );
 
   const gmailIds = gmailThreads.map((t) => t.id);
-  return queries.listEmailThreadsByGmailIds(gmailIds);
+  return queries.listEmailThreadsByGmailIds(userId, gmailIds);
 }
 
-export async function getThread(gmailThreadId: string) {
-  const cached = await queries.getEmailThread(gmailThreadId);
+export async function getThread(userId: string, gmailThreadId: string) {
+  const cached = await queries.getEmailThread(userId, gmailThreadId);
   if (cached && cached.messages.length > 0) {
     return cached;
   }
-  const full = await gmail.getThread(gmailThreadId);
-  await queries.upsertEmailThread(toThreadRecord(full));
-  await queries.upsertEmailMessages(toMessageRecords(full.messages));
-  return queries.getEmailThread(gmailThreadId);
+  const auth = await withUserTokens(userId);
+  const full = await gmail.getThread(auth, gmailThreadId);
+  await queries.upsertEmailThread(userId, toThreadRecord(full));
+  await queries.upsertEmailMessages(userId, toMessageRecords(full.messages));
+  return queries.getEmailThread(userId, gmailThreadId);
 }
 
-export async function getUnbucketedThreads() {
-  const threads = await queries.getUnbucketedThreads(BATCH_SIZE);
+export async function getUnbucketedThreads(userId: string) {
+  const threads = await queries.getUnbucketedThreads(userId, BATCH_SIZE);
   return { unbucketed: threads.length, threads };
 }
 
 export async function sendMessage(
+  userId: string,
   to: string,
   subject: string,
   body: string,
   opts?: { cc?: string[] },
 ) {
-  await gmail.sendMessage(to, subject, body, opts);
+  const auth = await withUserTokens(userId);
+  await gmail.sendMessage(auth, to, subject, body, opts);
 }
 
-export async function replyToThread(threadId: string, messageId: string, body: string) {
-  await gmail.replyToThread(threadId, messageId, body);
-  const full = await gmail.getThread(threadId);
-  await queries.upsertEmailThread(toThreadRecord(full));
-  await queries.upsertEmailMessages(toMessageRecords(full.messages));
+export async function replyToThread(
+  userId: string,
+  threadId: string,
+  messageId: string,
+  body: string,
+) {
+  const auth = await withUserTokens(userId);
+  await gmail.replyToThread(auth, threadId, messageId, body);
+  const full = await gmail.getThread(auth, threadId);
+  await queries.upsertEmailThread(userId, toThreadRecord(full));
+  await queries.upsertEmailMessages(userId, toMessageRecords(full.messages));
 }
 
-export async function createDraft(to: string, subject: string, body: string, threadId?: string) {
-  const draftId = await gmail.createDraft(to, subject, body, threadId);
+export async function createDraft(
+  userId: string,
+  to: string,
+  subject: string,
+  body: string,
+  threadId?: string,
+) {
+  const auth = await withUserTokens(userId);
+  const draftId = await gmail.createDraft(auth, to, subject, body, threadId);
   return draftId;
 }
 
-export async function trashThread(gmailThreadId: string) {
-  await gmail.trashThread(gmailThreadId);
-  await queries.unassignThread(gmailThreadId);
+export async function trashThread(userId: string, gmailThreadId: string) {
+  const auth = await withUserTokens(userId);
+  await gmail.trashThread(auth, gmailThreadId);
+  await queries.unassignThread(userId, gmailThreadId);
 }
 
-export async function markAsRead(messageId: string) {
-  await gmail.markAsRead(messageId);
+export async function markAsRead(userId: string, messageId: string) {
+  const auth = await withUserTokens(userId);
+  await gmail.markAsRead(auth, messageId);
 }

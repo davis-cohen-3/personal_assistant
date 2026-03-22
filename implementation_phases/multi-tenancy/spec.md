@@ -159,19 +159,28 @@ These also need the user's Google tokens loaded before calling Gmail APIs. The `
 
 MCP tools run inside the Agent SDK, not in HTTP context. They need `userId` to call queries.
 
-**Approach:** `createCustomMcpServer` accepts `userId` and closes over it. Tool handlers access it from the closure.
+**Approach:** Each handler in the exported `handlers` object takes `userId` as its first parameter (same as queries). `createCustomMcpServer(userId)` wraps each handler call to inject `userId`. This keeps handlers independently testable.
 
 ```typescript
-export function createCustomMcpServer(userId: string) {
-  // All handlers below capture userId from this closure
-  server.tool("buckets", ..., async (params) => {
+// handlers stay exported and take userId as first param
+export const handlers = {
+  buckets: async (userId: string, params: { action: ... }) => {
     const result = await listBuckets(userId);
     // ...
+  },
+};
+
+// createCustomMcpServer wraps handlers to inject userId
+export function createCustomMcpServer(userId: string) {
+  return createSdkMcpServer({
+    tools: [
+      tool("buckets", ..., schema, (params) => handlers.buckets(userId, params)),
+    ],
   });
 }
 ```
 
-This already works with the current architecture — `createCustomMcpServer` is called per-query in `streamQuery`, so `userId` is naturally available.
+This is a mechanical consequence of adding `userId` to query functions — not a separate architectural change.
 
 ## Agent / WebSocket (`agent.ts`)
 
@@ -199,13 +208,12 @@ None. The frontend is already auth-gated. The session cookie identifies the user
 1. **Schema + migration** — users table, add user_id columns, backfill
 2. **Auth changes** — JWT payload, middleware, drop ALLOWED_USERS, OAuth callback creates user
 3. **Google token storage** — per-user tokens, withUserTokens helper
-4. **Query functions** — add userId param to all ~25 functions
+4. **Query functions + MCP tools** — add userId param to all ~25 query functions; add userId as first param to all tool handlers; update createCustomMcpServer(userId) to wrap handlers
 5. **Routes** — extract userId, pass to queries
 6. **Email orchestration** — thread userId through
-7. **MCP tools** — pass userId via createCustomMcpServer closure
-8. **Agent/WebSocket** — thread userId from context through to streamQuery
-9. **Remove startup loadTokens** — no longer needed
-10. **Test** — verify two users see isolated data
+7. **Agent/WebSocket** — thread userId from context through to streamQuery
+8. **Remove startup loadTokens** — no longer needed
+9. **Tests** — update all tests to pass userId, verify isolation
 
 ## Files Changed
 
@@ -216,15 +224,15 @@ None. The frontend is already auth-gated. The session cookie identifies the user
 | `src/server/auth.ts` | 2 |
 | `src/server/google/auth.ts` | 3 |
 | `src/server/db/queries.ts` | 4 |
+| `src/server/tools.ts` | 4 |
 | `src/server/routes.ts` | 5 |
 | `src/server/email.ts` | 6 |
-| `src/server/tools.ts` | 7 |
-| `src/server/agent.ts` | 8 |
-| `src/server/index.ts` | 9 |
+| `src/server/agent.ts` | 7 |
+| `src/server/index.ts` | 8 |
 | `src/shared/types.ts` | 1, 4 |
-| `tests/integration/db/queries.test.ts` | 4 |
-| `tests/unit/auth.test.ts` | 2 |
-| `tests/unit/routes.test.ts` | 5 |
-| `tests/unit/email.test.ts` | 6 |
-| `tests/unit/tools.test.ts` | 7 |
-| `tests/unit/agent.test.ts` | 8 |
+| `tests/integration/db/queries.test.ts` | 9 |
+| `tests/unit/auth.test.ts` | 9 |
+| `tests/unit/routes.test.ts` | 9 |
+| `tests/unit/email.test.ts` | 9 |
+| `tests/unit/tools.test.ts` | 9 |
+| `tests/unit/agent.test.ts` | 9 |

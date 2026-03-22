@@ -53,7 +53,16 @@ vi.mock("../../src/server/db/queries.js", () => ({
   unassignThread: mockUnassignThread,
 }));
 
+const { mockAuthClient } = vi.hoisted(() => ({
+  mockAuthClient: { setCredentials: vi.fn() },
+}));
+vi.mock("../../src/server/google/auth.js", () => ({
+  withUserTokens: vi.fn().mockResolvedValue(mockAuthClient),
+}));
+
 import * as email from "../../src/server/email.js";
+
+const TEST_USER_ID = "user-1";
 
 function makeGmailMessage(overrides: {
   id?: string;
@@ -110,9 +119,9 @@ describe("extractBodyText", () => {
     const msg = makeGmailMessage({ bodyText: "plain text content", bodyHtml: "<p>html</p>" });
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1", [msg]));
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    const [messages] = mockUpsertEmailMessages.mock.lastCall!;
+    const [, messages] = mockUpsertEmailMessages.mock.lastCall!;
     expect(messages[0].body_text).toBe("plain text content");
   });
 
@@ -124,9 +133,9 @@ describe("extractBodyText", () => {
     });
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1", [msg]));
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    const [messages] = mockUpsertEmailMessages.mock.lastCall!;
+    const [, messages] = mockUpsertEmailMessages.mock.lastCall!;
     expect(messages[0].body_text).toBe("Promo deal");
   });
 
@@ -138,9 +147,9 @@ describe("extractBodyText", () => {
     });
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1", [msg]));
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    const [messages] = mockUpsertEmailMessages.mock.lastCall!;
+    const [, messages] = mockUpsertEmailMessages.mock.lastCall!;
     expect(messages[0].body_text).toBe("Hello world more");
   });
 
@@ -149,9 +158,9 @@ describe("extractBodyText", () => {
     const msg = makeGmailMessage({ bodyText: "", bodyHtml: "" });
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1", [msg]));
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    const [messages] = mockUpsertEmailMessages.mock.lastCall!;
+    const [, messages] = mockUpsertEmailMessages.mock.lastCall!;
     expect(messages[0].body_text).toBe("");
   });
 });
@@ -167,7 +176,7 @@ describe("syncInbox", () => {
     mockSearchThreads.mockResolvedValue([]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
 
-    const result = await email.syncInbox();
+    const result = await email.syncInbox(TEST_USER_ID);
 
     expect(result).toEqual({ new: 0, updated: 0 });
     expect(mockGetThread).not.toHaveBeenCalled();
@@ -177,18 +186,18 @@ describe("syncInbox", () => {
     mockSearchThreads.mockResolvedValue([]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    expect(mockSearchThreads).toHaveBeenCalledWith("is:inbox", 200);
+    expect(mockSearchThreads).toHaveBeenCalledWith(mockAuthClient, "is:inbox", 200);
   });
 
   it("passes provided maxResults to searchThreads", async () => {
     mockSearchThreads.mockResolvedValue([]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
 
-    await email.syncInbox(50);
+    await email.syncInbox(TEST_USER_ID, 50);
 
-    expect(mockSearchThreads).toHaveBeenCalledWith("is:inbox", 50);
+    expect(mockSearchThreads).toHaveBeenCalledWith(mockAuthClient, "is:inbox", 50);
   });
 
   it("fetches and upserts a new thread not in DB", async () => {
@@ -197,9 +206,9 @@ describe("syncInbox", () => {
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
 
-    const result = await email.syncInbox();
+    const result = await email.syncInbox(TEST_USER_ID);
 
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockGetThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
     expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
     expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ new: 1, updated: 0 });
@@ -210,7 +219,7 @@ describe("syncInbox", () => {
     mockSearchThreads.mockResolvedValue([summary]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([makeDbThread("thread-1", "Same snippet")]);
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
     expect(mockGetThread).not.toHaveBeenCalled();
     expect(mockUpsertEmailThread).not.toHaveBeenCalled();
@@ -222,9 +231,9 @@ describe("syncInbox", () => {
     mockListEmailThreadsByGmailIds.mockResolvedValue([makeDbThread("thread-1", "Old snippet")]);
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
 
-    const result = await email.syncInbox();
+    const result = await email.syncInbox(TEST_USER_ID);
 
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockGetThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
     expect(result).toEqual({ new: 0, updated: 1 });
   });
 
@@ -238,11 +247,11 @@ describe("syncInbox", () => {
       makeDbThread("changed-thread", "Old snippet"),
       makeDbThread("same-thread", "Same snippet"),
     ]);
-    mockGetThread.mockImplementation((id: string) =>
+    mockGetThread.mockImplementation((_auth: unknown, id: string) =>
       Promise.resolve(makeGmailThread(id)),
     );
 
-    const result = await email.syncInbox();
+    const result = await email.syncInbox(TEST_USER_ID);
 
     expect(mockGetThread).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ new: 1, updated: 1 });
@@ -254,9 +263,10 @@ describe("syncInbox", () => {
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
     mockGetThread.mockResolvedValue(makeGmailThread("thread-42"));
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    const [threadRecord] = mockUpsertEmailThread.mock.lastCall!;
+    const [userId, threadRecord] = mockUpsertEmailThread.mock.lastCall!;
+    expect(userId).toBe(TEST_USER_ID);
     expect(threadRecord.gmail_thread_id).toBe("thread-42");
   });
 
@@ -266,9 +276,9 @@ describe("syncInbox", () => {
     const msg = makeGmailMessage({ id: "msg-abc", threadId: "thread-1" });
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1", [msg]));
 
-    await email.syncInbox();
+    await email.syncInbox(TEST_USER_ID);
 
-    const [messages] = mockUpsertEmailMessages.mock.lastCall!;
+    const [, messages] = mockUpsertEmailMessages.mock.lastCall!;
     expect(messages[0].gmail_message_id).toBe("msg-abc");
     expect(messages[0].gmail_thread_id).toBe("thread-1");
   });
@@ -285,7 +295,7 @@ describe("search", () => {
     mockSearchThreads.mockResolvedValue([]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
 
-    const result = await email.search("from:nobody@example.com");
+    const result = await email.search(TEST_USER_ID, "from:nobody@example.com");
 
     expect(result).toEqual([]);
     expect(mockGetThread).not.toHaveBeenCalled();
@@ -297,9 +307,9 @@ describe("search", () => {
     const dbThread = makeDbThread("thread-1");
     mockListEmailThreadsByGmailIds.mockResolvedValue([dbThread]);
 
-    const result = await email.search("from:alice@example.com");
+    const result = await email.search(TEST_USER_ID, "from:alice@example.com");
 
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockGetThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
     expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
     expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
     expect(result).toEqual([dbThread]);
@@ -309,18 +319,18 @@ describe("search", () => {
     mockSearchThreads.mockResolvedValue([]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
 
-    await email.search("is:unread");
+    await email.search(TEST_USER_ID, "is:unread");
 
-    expect(mockSearchThreads).toHaveBeenCalledWith("is:unread", 25);
+    expect(mockSearchThreads).toHaveBeenCalledWith(mockAuthClient, "is:unread", 25);
   });
 
   it("caps resultLimit at BATCH_SIZE when maxResults exceeds it", async () => {
     mockSearchThreads.mockResolvedValue([]);
     mockListEmailThreadsByGmailIds.mockResolvedValue([]);
 
-    await email.search("is:unread", 100);
+    await email.search(TEST_USER_ID, "is:unread", 100);
 
-    expect(mockSearchThreads).toHaveBeenCalledWith("is:unread", 25);
+    expect(mockSearchThreads).toHaveBeenCalledWith(mockAuthClient, "is:unread", 25);
   });
 
   it("applies extractBodyText to messages before upserting", async () => {
@@ -329,9 +339,9 @@ describe("search", () => {
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1", [msg]));
     mockListEmailThreadsByGmailIds.mockResolvedValue([makeDbThread("thread-1")]);
 
-    await email.search("label:promotions");
+    await email.search(TEST_USER_ID, "label:promotions");
 
-    const [messages] = mockUpsertEmailMessages.mock.lastCall!;
+    const [, messages] = mockUpsertEmailMessages.mock.lastCall!;
     expect(messages[0].body_text).toBe("Promo content");
   });
 });
@@ -347,7 +357,7 @@ describe("getThread", () => {
     const dbThread = { ...makeDbThread("thread-1"), messages: [{ gmail_message_id: "msg-1" }] };
     mockGetEmailThread.mockResolvedValue(dbThread);
 
-    const result = await email.getThread("thread-1");
+    const result = await email.getThread(TEST_USER_ID, "thread-1");
 
     expect(result).toBe(dbThread);
     expect(mockGetThread).not.toHaveBeenCalled();
@@ -360,9 +370,9 @@ describe("getThread", () => {
     const dbThread = { ...makeDbThread("thread-1"), messages: [{ gmail_message_id: "msg-1" }] };
     mockGetEmailThread.mockResolvedValueOnce(dbThread);
 
-    const result = await email.getThread("thread-1");
+    const result = await email.getThread(TEST_USER_ID, "thread-1");
 
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockGetThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
     expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
     expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
     expect(result).toBe(dbThread);
@@ -375,9 +385,9 @@ describe("getThread", () => {
     const fullThread = { ...makeDbThread("thread-1"), messages: [{ gmail_message_id: "msg-1" }] };
     mockGetEmailThread.mockResolvedValueOnce(fullThread);
 
-    const result = await email.getThread("thread-1");
+    const result = await email.getThread(TEST_USER_ID, "thread-1");
 
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockGetThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
     expect(result).toBe(fullThread);
   });
 });
@@ -387,7 +397,7 @@ describe("getUnbucketedThreads", () => {
     const threads = [makeDbThread("t-1"), makeDbThread("t-2")];
     mockGetUnbucketedThreads.mockResolvedValue(threads);
 
-    const result = await email.getUnbucketedThreads();
+    const result = await email.getUnbucketedThreads(TEST_USER_ID);
 
     expect(result).toEqual({ unbucketed: 2, threads });
   });
@@ -395,9 +405,9 @@ describe("getUnbucketedThreads", () => {
   it("passes BATCH_SIZE (25) as limit to the query", async () => {
     mockGetUnbucketedThreads.mockResolvedValue([]);
 
-    await email.getUnbucketedThreads();
+    await email.getUnbucketedThreads(TEST_USER_ID);
 
-    expect(mockGetUnbucketedThreads).toHaveBeenCalledWith(25);
+    expect(mockGetUnbucketedThreads).toHaveBeenCalledWith(TEST_USER_ID, 25);
   });
 });
 
@@ -405,9 +415,9 @@ describe("sendMessage", () => {
   it("delegates to gmail.sendMessage with same arguments", async () => {
     mockSendMessage.mockResolvedValue(undefined);
 
-    await email.sendMessage("to@example.com", "Subject", "Body", { cc: ["cc@example.com"] });
+    await email.sendMessage(TEST_USER_ID, "to@example.com", "Subject", "Body", { cc: ["cc@example.com"] });
 
-    expect(mockSendMessage).toHaveBeenCalledWith("to@example.com", "Subject", "Body", {
+    expect(mockSendMessage).toHaveBeenCalledWith(mockAuthClient, "to@example.com", "Subject", "Body", {
       cc: ["cc@example.com"],
     });
   });
@@ -424,17 +434,17 @@ describe("replyToThread", () => {
   it("delegates to gmail.replyToThread with same arguments", async () => {
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
 
-    await email.replyToThread("thread-1", "msg-1", "Reply body");
+    await email.replyToThread(TEST_USER_ID, "thread-1", "msg-1", "Reply body");
 
-    expect(mockReplyToThread).toHaveBeenCalledWith("thread-1", "msg-1", "Reply body");
+    expect(mockReplyToThread).toHaveBeenCalledWith(mockAuthClient, "thread-1", "msg-1", "Reply body");
   });
 
   it("re-syncs thread to DB after sending reply", async () => {
     mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
 
-    await email.replyToThread("thread-1", "msg-1", "Reply body");
+    await email.replyToThread(TEST_USER_ID, "thread-1", "msg-1", "Reply body");
 
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockGetThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
     expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
     expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
   });
@@ -444,9 +454,10 @@ describe("createDraft", () => {
   it("delegates to gmail.createDraft with same arguments", async () => {
     mockCreateDraft.mockResolvedValue("draft-id-1");
 
-    const result = await email.createDraft("to@example.com", "Draft subject", "Draft body", "thread-1");
+    const result = await email.createDraft(TEST_USER_ID, "to@example.com", "Draft subject", "Draft body", "thread-1");
 
     expect(mockCreateDraft).toHaveBeenCalledWith(
+      mockAuthClient,
       "to@example.com",
       "Draft subject",
       "Draft body",
@@ -461,10 +472,10 @@ describe("trashThread", () => {
     mockTrashThread.mockResolvedValue(undefined);
     mockUnassignThread.mockResolvedValue(undefined);
 
-    await email.trashThread("thread-1");
+    await email.trashThread(TEST_USER_ID, "thread-1");
 
-    expect(mockTrashThread).toHaveBeenCalledWith("thread-1");
-    expect(mockUnassignThread).toHaveBeenCalledWith("thread-1");
+    expect(mockTrashThread).toHaveBeenCalledWith(mockAuthClient, "thread-1");
+    expect(mockUnassignThread).toHaveBeenCalledWith(TEST_USER_ID, "thread-1");
   });
 });
 
@@ -472,8 +483,8 @@ describe("markAsRead", () => {
   it("delegates to gmail.markAsRead with same message ID", async () => {
     mockMarkAsRead.mockResolvedValue(undefined);
 
-    await email.markAsRead("msg-1");
+    await email.markAsRead(TEST_USER_ID, "msg-1");
 
-    expect(mockMarkAsRead).toHaveBeenCalledWith("msg-1");
+    expect(mockMarkAsRead).toHaveBeenCalledWith(mockAuthClient, "msg-1");
   });
 });

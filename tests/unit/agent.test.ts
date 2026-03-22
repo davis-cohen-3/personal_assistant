@@ -54,11 +54,13 @@ function makeMockWs() {
   } as unknown as WSContext;
 }
 
+const TEST_USER_ID = "user-1";
+
 function makeCtx(conversationId: string | null): Context {
   const url = conversationId
     ? `http://localhost:3000/ws?conversationId=${conversationId}`
     : "http://localhost:3000/ws";
-  return { req: { url } } as unknown as Context;
+  return { req: { url }, get: () => TEST_USER_ID } as unknown as Context;
 }
 
 describe("streamQuery", () => {
@@ -96,7 +98,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "tell me something");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "tell me something");
 
     expect(ws.send).toHaveBeenCalledWith(
       JSON.stringify({ type: "text_delta", content: "hello" })
@@ -122,7 +124,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt");
 
     expect(ws.send).toHaveBeenCalledWith(
       JSON.stringify({ type: "text_done", content: "full response text" })
@@ -145,12 +147,13 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt");
 
-    expect(mockUpdateConversation).toHaveBeenCalledWith("conv-1", {
+    expect(mockUpdateConversation).toHaveBeenCalledWith(TEST_USER_ID, "conv-1", {
       sdk_session_id: "sess-abc",
     });
     expect(mockCreateChatMessage).toHaveBeenCalledWith(
+      TEST_USER_ID,
       "conv-1",
       "assistant",
       "response"
@@ -173,7 +176,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt", "existing-session");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt", "existing-session");
 
     expect(mockQuery).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -202,7 +205,7 @@ describe("streamQuery", () => {
         ])
       );
 
-    await streamQuery(ws, "conv-1", "prompt", "stale-session-id");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt", "stale-session-id");
 
     expect(mockQuery).toHaveBeenCalledTimes(2);
     const secondCallArg = mockQuery.mock.calls[1][0] as {
@@ -221,7 +224,7 @@ describe("streamQuery", () => {
       throw new Error("hard error");
     });
 
-    await expect(streamQuery(ws, "conv-1", "prompt")).rejects.toThrow(
+    await expect(streamQuery(ws, TEST_USER_ID, "conv-1", "prompt")).rejects.toThrow(
       "hard error"
     );
     expect(mockQuery).toHaveBeenCalledTimes(1);
@@ -243,7 +246,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt");
 
     expect(ws.send).toHaveBeenCalledWith(
       JSON.stringify({ type: "error", message: "Agent encountered an error — check server logs" })
@@ -275,7 +278,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt");
 
     expect(ws.send).toHaveBeenCalledWith(
       JSON.stringify({
@@ -318,7 +321,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt");
 
     const textDeltaCalls = (ws.send as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([arg]: [string]) => {
@@ -358,7 +361,7 @@ describe("streamQuery", () => {
       ])
     );
 
-    await streamQuery(ws, "conv-1", "prompt");
+    await streamQuery(ws, TEST_USER_ID, "conv-1", "prompt");
 
     const textDeltaCalls = (ws.send as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([arg]: [string]) => {
@@ -456,7 +459,7 @@ describe("handleWebSocket", () => {
     });
     await events.onMessage?.(msg, ws);
 
-    expect(mockCreateChatMessage).toHaveBeenCalledWith("conv-1", "user", "hello");
+    expect(mockCreateChatMessage).toHaveBeenCalledWith(TEST_USER_ID, "conv-1", "user", "hello");
   });
 
   it("auto-titles conversation on first user message", async () => {
@@ -482,7 +485,7 @@ describe("handleWebSocket", () => {
     });
     await events.onMessage?.(msg, ws);
 
-    expect(mockUpdateConversation).toHaveBeenCalledWith("conv-1", {
+    expect(mockUpdateConversation).toHaveBeenCalledWith(TEST_USER_ID, "conv-1", {
       title: content.slice(0, 80),
     });
     expect(ws.send).toHaveBeenCalledWith(
@@ -517,7 +520,7 @@ describe("handleWebSocket", () => {
     });
     await events.onMessage?.(msg, ws);
 
-    expect(mockUpdateConversation).toHaveBeenCalledWith("conv-1", {
+    expect(mockUpdateConversation).toHaveBeenCalledWith(TEST_USER_ID, "conv-1", {
       title: "A".repeat(80),
     });
   });

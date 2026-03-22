@@ -6,6 +6,17 @@ export interface BucketDraft {
   description: string;
 }
 
+const BUCKET_DOT_COLORS = [
+  "bg-blue-400",
+  "bg-amber-400",
+  "bg-emerald-400",
+  "bg-rose-400",
+  "bg-violet-400",
+  "bg-cyan-400",
+  "bg-orange-400",
+  "bg-pink-400",
+];
+
 const DEFAULT_BUCKETS: BucketDraft[] = [
   {
     name: "Important",
@@ -69,6 +80,9 @@ export default function GroupEmailsSetup({ onConfirm, onCancel, initialBuckets }
       <div className="space-y-2 mb-4">
         {buckets.map((bucket, i) => (
           <div key={`bucket-${bucket.name}-${i}`} className="flex items-center gap-2 group">
+            <span
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${BUCKET_DOT_COLORS[i % BUCKET_DOT_COLORS.length]}`}
+            />
             <input
               type="text"
               value={bucket.name}

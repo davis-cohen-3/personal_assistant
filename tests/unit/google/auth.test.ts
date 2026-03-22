@@ -20,12 +20,14 @@ vi.mock("../../../src/server/db/queries.js", () => ({
 
 import * as cryptoModule from "../../../src/server/crypto.js";
 import * as queries from "../../../src/server/db/queries.js";
-import { isGoogleConnected, loadTokens, persistTokens } from "../../../src/server/google/auth.js";
+import { isGoogleConnected, persistTokens, withUserTokens } from "../../../src/server/google/auth.js";
 
 const mockEncrypt = vi.mocked(cryptoModule.encrypt);
 const mockDecrypt = vi.mocked(cryptoModule.decrypt);
 const mockUpsert = vi.mocked(queries.upsertGoogleTokens);
 const mockGet = vi.mocked(queries.getGoogleTokens);
+
+const TEST_USER_ID = "user-1";
 
 beforeAll(() => {
   vi.clearAllMocks();
@@ -39,7 +41,7 @@ describe("persistTokens", () => {
   it("encrypts both access_token and refresh_token before upserting", async () => {
     mockUpsert.mockResolvedValue({} as never);
 
-    await persistTokens({
+    await persistTokens(TEST_USER_ID, {
       access_token: "my-access-token",
       refresh_token: "my-refresh-token",
       scope: "email",
@@ -57,7 +59,7 @@ describe("persistTokens — refresh path (no refresh_token)", () => {
   it("loads existing refresh_token from DB when not provided in tokens", async () => {
     mockUpsert.mockResolvedValue({} as never);
     mockGet.mockResolvedValue({
-      id: "primary",
+      user_id: TEST_USER_ID,
       access_token: "encrypted:old-access",
       refresh_token: "encrypted:existing-refresh",
       scope: "email",
@@ -66,7 +68,7 @@ describe("persistTokens — refresh path (no refresh_token)", () => {
       updated_at: new Date(),
     });
 
-    await persistTokens({
+    await persistTokens(TEST_USER_ID, {
       access_token: "new-access-token",
       scope: "email",
       token_type: "Bearer",
@@ -79,10 +81,10 @@ describe("persistTokens — refresh path (no refresh_token)", () => {
   });
 });
 
-describe("loadTokens", () => {
-  it("calls decrypt on stored access_token and refresh_token", async () => {
+describe("withUserTokens", () => {
+  it("loads tokens and sets credentials on the auth client", async () => {
     mockGet.mockResolvedValue({
-      id: "primary",
+      user_id: TEST_USER_ID,
       access_token: "encrypted:stored-access",
       refresh_token: "encrypted:stored-refresh",
       scope: "email",
@@ -91,26 +93,25 @@ describe("loadTokens", () => {
       updated_at: new Date(),
     });
 
-    await loadTokens();
+    const client = await withUserTokens(TEST_USER_ID);
 
+    expect(client).toBeDefined();
+    expect(mockGet).toHaveBeenCalledWith(TEST_USER_ID);
     expect(mockDecrypt).toHaveBeenCalledWith("encrypted:stored-access");
     expect(mockDecrypt).toHaveBeenCalledWith("encrypted:stored-refresh");
   });
 
-  it("returns early without calling decrypt when no stored tokens", async () => {
+  it("throws when no tokens exist for user", async () => {
     mockGet.mockResolvedValue(null);
-    mockDecrypt.mockClear();
 
-    await loadTokens();
-
-    expect(mockDecrypt).not.toHaveBeenCalled();
+    await expect(withUserTokens(TEST_USER_ID)).rejects.toThrow("No Google tokens for user");
   });
 });
 
 describe("isGoogleConnected", () => {
   it("returns true when tokens exist", async () => {
     mockGet.mockResolvedValue({
-      id: "primary",
+      user_id: TEST_USER_ID,
       access_token: "enc",
       refresh_token: "enc",
       scope: "email",
@@ -119,14 +120,14 @@ describe("isGoogleConnected", () => {
       updated_at: new Date(),
     });
 
-    const result = await isGoogleConnected();
+    const result = await isGoogleConnected(TEST_USER_ID);
     expect(result).toBe(true);
   });
 
   it("returns false when no tokens exist", async () => {
     mockGet.mockResolvedValue(null);
 
-    const result = await isGoogleConnected();
+    const result = await isGoogleConnected(TEST_USER_ID);
     expect(result).toBe(false);
   });
 });

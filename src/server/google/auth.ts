@@ -1,6 +1,6 @@
 import { type Auth, google } from "googleapis";
 
-type OAuth2Client = InstanceType<typeof Auth.OAuth2Client>;
+export type OAuth2Client = InstanceType<typeof Auth.OAuth2Client>;
 type Credentials = Auth.Credentials;
 
 import { decrypt, encrypt } from "../crypto.js";
@@ -19,25 +19,17 @@ export function getAuthClient(): OAuth2Client {
     if (!redirectUri) throw new AppError("Missing GOOGLE_REDIRECT_URI", 500);
 
     oauthClient = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
-
-    // Re-persist tokens automatically on every refresh
-    oauthClient.on("tokens", (tokens) => {
-      console.info("google.auth token refresh received", { expiryDate: tokens.expiry_date });
-      persistTokens(tokens).catch((err) => {
-        console.error("Failed to persist refreshed tokens", { error: err });
-      });
-    });
   }
   return oauthClient;
 }
 
-export async function persistTokens(tokens: Credentials): Promise<void> {
+export async function persistTokens(userId: string, tokens: Credentials): Promise<void> {
   if (!tokens.access_token) throw new AppError("Missing access_token", 500);
 
   // On a refresh event, refresh_token is not returned — load the existing one
   let refreshToken = tokens.refresh_token;
   if (!refreshToken) {
-    const existing = await getGoogleTokens();
+    const existing = await getGoogleTokens(userId);
     if (!existing) throw new AppError("No existing tokens to refresh against", 500);
     refreshToken = decrypt(existing.refresh_token);
   }
@@ -47,7 +39,7 @@ export async function persistTokens(tokens: Credentials): Promise<void> {
   if (!tokens.scope) throw new AppError("Missing scope in OAuth tokens", 500);
   if (!tokens.token_type) throw new AppError("Missing token_type in OAuth tokens", 500);
 
-  await upsertGoogleTokens({
+  await upsertGoogleTokens(userId, {
     access_token: encrypt(tokens.access_token),
     refresh_token: encrypt(refreshToken),
     scope: tokens.scope,
@@ -56,23 +48,53 @@ export async function persistTokens(tokens: Credentials): Promise<void> {
   });
 }
 
-export async function isGoogleConnected(): Promise<boolean> {
-  const stored = await getGoogleTokens();
+export async function isGoogleConnected(userId: string): Promise<boolean> {
+  const stored = await getGoogleTokens(userId);
   return stored !== null;
 }
 
-export async function loadTokens(): Promise<void> {
-  const stored = await getGoogleTokens();
-  if (!stored) {
-    console.info("google.auth.loadTokens — no stored tokens (pre-login)");
-    return;
-  }
-  console.info("google.auth.loadTokens — credentials loaded", { expiryDate: stored.expiry_date });
-  getAuthClient().setCredentials({
+export async function withUserTokens(userId: string): Promise<OAuth2Client> {
+  const stored = await getGoogleTokens(userId);
+  if (!stored) throw new AppError("No Google tokens for user", 401);
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+  if (!clientId) throw new AppError("Missing GOOGLE_CLIENT_ID", 500);
+  if (!clientSecret) throw new AppError("Missing GOOGLE_CLIENT_SECRET", 500);
+  if (!redirectUri) throw new AppError("Missing GOOGLE_REDIRECT_URI", 500);
+
+  const client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+  client.setCredentials({
     access_token: decrypt(stored.access_token),
     refresh_token: decrypt(stored.refresh_token),
     scope: stored.scope,
     token_type: stored.token_type,
-    expiry_date: stored.expiry_date.getTime(), // googleapis expects epoch ms
+    expiry_date: stored.expiry_date.getTime(),
   });
+
+  let pendingTokenPersist: Promise<void> | null = null;
+
+  client.on("tokens", (tokens) => {
+    console.info("google.auth token refresh received", {
+      userId,
+      expiryDate: tokens.expiry_date,
+    });
+    pendingTokenPersist = persistTokens(userId, tokens);
+    pendingTokenPersist.catch((err) => {
+      console.error("Failed to persist refreshed tokens", { error: err });
+    });
+  });
+
+  const originalRequest = client.request.bind(client);
+  client.request = async <T>(opts: Parameters<typeof originalRequest<T>>[0]) => {
+    const result = await originalRequest<T>(opts);
+    if (pendingTokenPersist) {
+      await pendingTokenPersist;
+      pendingTokenPersist = null;
+    }
+    return result;
+  };
+
+  return client;
 }

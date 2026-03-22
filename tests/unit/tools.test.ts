@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const TEST_USER_ID = "user-1";
+
 const {
   mockListBuckets,
   mockCreateBucket,
@@ -106,10 +108,19 @@ vi.mock("../../src/server/google/drive.js", () => ({
   getFileMetadata: mockDriveGetFileMetadata,
 }));
 
+const { mockAuthClient } = vi.hoisted(() => ({
+  mockAuthClient: { setCredentials: vi.fn() },
+}));
+vi.mock("../../src/server/google/auth.js", () => ({
+  withUserTokens: vi.fn().mockResolvedValue(mockAuthClient),
+}));
+
+import { withUserTokens } from "../../src/server/google/auth.js";
 import { handlers } from "../../src/server/tools.js";
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(withUserTokens).mockResolvedValue(mockAuthClient);
 });
 
 describe("buckets tool", () => {
@@ -118,9 +129,9 @@ describe("buckets tool", () => {
       const buckets = [{ id: "b1", name: "Inbox", description: "Main inbox" }];
       mockListBuckets.mockResolvedValue(buckets);
 
-      const result = await handlers.buckets({ action: "list" });
+      const result = await handlers.buckets(TEST_USER_ID, { action: "list" });
 
-      expect(mockListBuckets).toHaveBeenCalledOnce();
+      expect(mockListBuckets).toHaveBeenCalledWith(TEST_USER_ID);
       expect(result.content[0].type).toBe("text");
       expect(JSON.parse(result.content[0].text)).toEqual(buckets);
     });
@@ -132,14 +143,14 @@ describe("buckets tool", () => {
       mockCreateBucket.mockResolvedValue(created);
       mockMarkAllForRebucket.mockResolvedValue(undefined);
 
-      const result = await handlers.buckets({
+      const result = await handlers.buckets(TEST_USER_ID, {
         action: "create",
         name: "Newsletters",
         description: "Newsletter emails",
       });
 
-      expect(mockCreateBucket).toHaveBeenCalledWith("Newsletters", "Newsletter emails");
-      expect(mockMarkAllForRebucket).toHaveBeenCalledOnce();
+      expect(mockCreateBucket).toHaveBeenCalledWith(TEST_USER_ID, "Newsletters", "Newsletter emails");
+      expect(mockMarkAllForRebucket).toHaveBeenCalledWith(TEST_USER_ID);
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.rebucket_required).toBe(true);
@@ -153,7 +164,7 @@ describe("buckets tool", () => {
       const updated = { id: "b1", name: "Updated Name", description: "Updated desc" };
       mockUpdateBucket.mockResolvedValue(updated);
 
-      const result = await handlers.buckets({
+      const result = await handlers.buckets(TEST_USER_ID, {
         action: "update",
         id: "b1",
         name: "Updated Name",
@@ -161,6 +172,7 @@ describe("buckets tool", () => {
       });
 
       expect(mockUpdateBucket).toHaveBeenCalledWith(
+        TEST_USER_ID,
         "b1",
         expect.objectContaining({ name: "Updated Name", description: "Updated desc" }),
       );
@@ -173,9 +185,9 @@ describe("buckets tool", () => {
     it("calls queries.deleteBucket with id and returns ok: true", async () => {
       mockDeleteBucket.mockResolvedValue(undefined);
 
-      const result = await handlers.buckets({ action: "delete", id: "b1" });
+      const result = await handlers.buckets(TEST_USER_ID, { action: "delete", id: "b1" });
 
-      expect(mockDeleteBucket).toHaveBeenCalledWith("b1");
+      expect(mockDeleteBucket).toHaveBeenCalledWith(TEST_USER_ID, "b1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.ok).toBe(true);
     });
@@ -191,9 +203,9 @@ describe("buckets tool", () => {
         { gmail_thread_id: "t2", bucket_id: "b2" },
       ];
 
-      await handlers.buckets({ action: "assign", assignments });
+      await handlers.buckets(TEST_USER_ID, { action: "assign", assignments });
 
-      expect(mockAssignThreadsBatch).toHaveBeenCalledWith([
+      expect(mockAssignThreadsBatch).toHaveBeenCalledWith(TEST_USER_ID, [
         { gmailThreadId: "t1", bucketId: "b1", subject: "Hello", snippet: "World" },
         { gmailThreadId: "t2", bucketId: "b2", subject: undefined, snippet: undefined },
       ]);
@@ -203,7 +215,7 @@ describe("buckets tool", () => {
       mockAssignThreadsBatch.mockResolvedValue([{}, {}]);
       mockCountUnbucketedThreads.mockResolvedValue(10);
 
-      const result = await handlers.buckets({
+      const result = await handlers.buckets(TEST_USER_ID, {
         action: "assign",
         assignments: [
           { gmail_thread_id: "t1", bucket_id: "b1" },
@@ -217,7 +229,7 @@ describe("buckets tool", () => {
     });
 
     it("returns error dict when assignments is missing", async () => {
-      const result = await handlers.buckets({ action: "assign" });
+      const result = await handlers.buckets(TEST_USER_ID, { action: "assign" });
 
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).error).toMatch(/assignments is required/);
@@ -229,7 +241,7 @@ describe("buckets tool", () => {
         bucket_id: "b1",
       }));
 
-      const result = await handlers.buckets({ action: "assign", assignments });
+      const result = await handlers.buckets(TEST_USER_ID, { action: "assign", assignments });
 
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).error).toMatch(/max 25/);
@@ -242,9 +254,9 @@ describe("sync_email tool", () => {
     it("calls email.syncInbox() and returns JSON", async () => {
       mockEmailSyncInbox.mockResolvedValue({ new: 3, updated: 2 });
 
-      const result = await handlers.sync_email({ action: "sync" });
+      const result = await handlers.sync_email(TEST_USER_ID, { action: "sync" });
 
-      expect(mockEmailSyncInbox).toHaveBeenCalledWith(undefined);
+      expect(mockEmailSyncInbox).toHaveBeenCalledWith(TEST_USER_ID, undefined);
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toEqual({ new: 3, updated: 2 });
     });
@@ -252,9 +264,9 @@ describe("sync_email tool", () => {
     it("passes max_results to syncInbox when provided", async () => {
       mockEmailSyncInbox.mockResolvedValue({ new: 0, updated: 0 });
 
-      await handlers.sync_email({ action: "sync", max_results: 50 });
+      await handlers.sync_email(TEST_USER_ID, { action: "sync", max_results: 50 });
 
-      expect(mockEmailSyncInbox).toHaveBeenCalledWith(50);
+      expect(mockEmailSyncInbox).toHaveBeenCalledWith(TEST_USER_ID, 50);
     });
   });
 
@@ -263,13 +275,13 @@ describe("sync_email tool", () => {
       const threads = [{ gmail_thread_id: "t1" }];
       mockEmailSearch.mockResolvedValue(threads);
 
-      const result = await handlers.sync_email({
+      const result = await handlers.sync_email(TEST_USER_ID, {
         action: "search",
         query: "from:alice@example.com",
         max_results: 10,
       });
 
-      expect(mockEmailSearch).toHaveBeenCalledWith("from:alice@example.com", 10);
+      expect(mockEmailSearch).toHaveBeenCalledWith(TEST_USER_ID, "from:alice@example.com", 10);
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toEqual(threads);
     });
@@ -280,9 +292,9 @@ describe("sync_email tool", () => {
       const thread = { gmail_thread_id: "t1", messages: [] };
       mockEmailGetThread.mockResolvedValue(thread);
 
-      const result = await handlers.sync_email({ action: "get_thread", thread_id: "t1" });
+      const result = await handlers.sync_email(TEST_USER_ID, { action: "get_thread", thread_id: "t1" });
 
-      expect(mockEmailGetThread).toHaveBeenCalledWith("t1");
+      expect(mockEmailGetThread).toHaveBeenCalledWith(TEST_USER_ID, "t1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.gmail_thread_id).toBe("t1");
     });
@@ -292,9 +304,9 @@ describe("sync_email tool", () => {
     it("calls email.getUnbucketedThreads and returns JSON", async () => {
       mockEmailGetUnbucketedThreads.mockResolvedValue({ unbucketed: 5, threads: [] });
 
-      const result = await handlers.sync_email({ action: "get_unbucketed" });
+      const result = await handlers.sync_email(TEST_USER_ID, { action: "get_unbucketed" });
 
-      expect(mockEmailGetUnbucketedThreads).toHaveBeenCalledOnce();
+      expect(mockEmailGetUnbucketedThreads).toHaveBeenCalledWith(TEST_USER_ID);
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.unbucketed).toBe(5);
     });
@@ -306,7 +318,7 @@ describe("action_email tool", () => {
     it("calls email.sendMessage with to, subject, body, and cc", async () => {
       mockEmailSendMessage.mockResolvedValue(undefined);
 
-      const result = await handlers.action_email({
+      const result = await handlers.action_email(TEST_USER_ID, {
         action: "send",
         to: "bob@example.com",
         subject: "Hello",
@@ -314,7 +326,7 @@ describe("action_email tool", () => {
         cc: ["cc@example.com"],
       });
 
-      expect(mockEmailSendMessage).toHaveBeenCalledWith("bob@example.com", "Hello", "Hi Bob", {
+      expect(mockEmailSendMessage).toHaveBeenCalledWith(TEST_USER_ID, "bob@example.com", "Hello", "Hi Bob", {
         cc: ["cc@example.com"],
       });
       const parsed = JSON.parse(result.content[0].text);
@@ -326,14 +338,14 @@ describe("action_email tool", () => {
     it("calls email.replyToThread with thread_id, message_id, body", async () => {
       mockEmailReplyToThread.mockResolvedValue(undefined);
 
-      const result = await handlers.action_email({
+      const result = await handlers.action_email(TEST_USER_ID, {
         action: "reply",
         thread_id: "t1",
         message_id: "m1",
         body: "Thanks!",
       });
 
-      expect(mockEmailReplyToThread).toHaveBeenCalledWith("t1", "m1", "Thanks!");
+      expect(mockEmailReplyToThread).toHaveBeenCalledWith(TEST_USER_ID, "t1", "m1", "Thanks!");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toEqual({ ok: true });
     });
@@ -343,7 +355,7 @@ describe("action_email tool", () => {
     it("calls email.createDraft with to, subject, body, and thread_id", async () => {
       mockEmailCreateDraft.mockResolvedValue("draft-1");
 
-      const result = await handlers.action_email({
+      const result = await handlers.action_email(TEST_USER_ID, {
         action: "draft",
         to: "bob@example.com",
         subject: "Draft subject",
@@ -352,6 +364,7 @@ describe("action_email tool", () => {
       });
 
       expect(mockEmailCreateDraft).toHaveBeenCalledWith(
+        TEST_USER_ID,
         "bob@example.com",
         "Draft subject",
         "Draft body",
@@ -366,9 +379,9 @@ describe("action_email tool", () => {
     it("calls email.trashThread with thread_id and returns ok: true", async () => {
       mockEmailTrashThread.mockResolvedValue(undefined);
 
-      const result = await handlers.action_email({ action: "trash", thread_id: "t1" });
+      const result = await handlers.action_email(TEST_USER_ID, { action: "trash", thread_id: "t1" });
 
-      expect(mockEmailTrashThread).toHaveBeenCalledWith("t1");
+      expect(mockEmailTrashThread).toHaveBeenCalledWith(TEST_USER_ID, "t1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.ok).toBe(true);
     });
@@ -378,9 +391,9 @@ describe("action_email tool", () => {
     it("calls email.markAsRead with message_id and returns ok: true", async () => {
       mockEmailMarkAsRead.mockResolvedValue(undefined);
 
-      const result = await handlers.action_email({ action: "mark_read", message_id: "m1" });
+      const result = await handlers.action_email(TEST_USER_ID, { action: "mark_read", message_id: "m1" });
 
-      expect(mockEmailMarkAsRead).toHaveBeenCalledWith("m1");
+      expect(mockEmailMarkAsRead).toHaveBeenCalledWith(TEST_USER_ID, "m1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.ok).toBe(true);
     });
@@ -393,7 +406,7 @@ describe("calendar tool", () => {
       const events = [{ id: "event-1", summary: "Meeting" }];
       mockCalendarListEvents.mockResolvedValue(events);
 
-      const result = await handlers.calendar({
+      const result = await handlers.calendar(TEST_USER_ID, {
         action: "list",
         time_min: "2024-01-01T00:00:00Z",
         time_max: "2024-01-31T23:59:59Z",
@@ -401,6 +414,7 @@ describe("calendar tool", () => {
       });
 
       expect(mockCalendarListEvents).toHaveBeenCalledWith(
+        mockAuthClient,
         "2024-01-01T00:00:00Z",
         "2024-01-31T23:59:59Z",
         { q: "team sync" },
@@ -415,15 +429,15 @@ describe("calendar tool", () => {
       const event = { id: "evt-1", summary: "Stand-up" };
       mockCalendarGetEvent.mockResolvedValue(event);
 
-      const result = await handlers.calendar({ action: "get", event_id: "evt-1" });
+      const result = await handlers.calendar(TEST_USER_ID, { action: "get", event_id: "evt-1" });
 
-      expect(mockCalendarGetEvent).toHaveBeenCalledWith("evt-1");
+      expect(mockCalendarGetEvent).toHaveBeenCalledWith(mockAuthClient, "evt-1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.id).toBe("evt-1");
     });
 
     it("returns error dict when event_id is missing", async () => {
-      const result = await handlers.calendar({ action: "get" });
+      const result = await handlers.calendar(TEST_USER_ID, { action: "get" });
 
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).error).toMatch(/event_id is required/);
@@ -435,7 +449,7 @@ describe("calendar tool", () => {
       const event = { id: "evt-new", summary: "Stand-up" };
       mockCalendarCreateEvent.mockResolvedValue(event);
 
-      const result = await handlers.calendar({
+      const result = await handlers.calendar(TEST_USER_ID, {
         action: "create",
         summary: "Stand-up",
         description: "Daily stand-up",
@@ -445,7 +459,7 @@ describe("calendar tool", () => {
         attendees: ["alice@example.com"],
       });
 
-      expect(mockCalendarCreateEvent).toHaveBeenCalledWith({
+      expect(mockCalendarCreateEvent).toHaveBeenCalledWith(mockAuthClient, {
         summary: "Stand-up",
         description: "Daily stand-up",
         location: "Conference room",
@@ -463,14 +477,14 @@ describe("calendar tool", () => {
       const updated = { id: "evt-1", summary: "Updated Stand-up" };
       mockCalendarUpdateEvent.mockResolvedValue(updated);
 
-      const result = await handlers.calendar({
+      const result = await handlers.calendar(TEST_USER_ID, {
         action: "update",
         event_id: "evt-1",
         summary: "Updated Stand-up",
         location: "Room B",
       });
 
-      expect(mockCalendarUpdateEvent).toHaveBeenCalledWith("evt-1", expect.objectContaining({
+      expect(mockCalendarUpdateEvent).toHaveBeenCalledWith(mockAuthClient, "evt-1", expect.objectContaining({
         summary: "Updated Stand-up",
         location: "Room B",
       }));
@@ -479,7 +493,7 @@ describe("calendar tool", () => {
     });
 
     it("returns error dict when event_id is missing", async () => {
-      const result = await handlers.calendar({ action: "update", summary: "No ID" });
+      const result = await handlers.calendar(TEST_USER_ID, { action: "update", summary: "No ID" });
 
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).error).toMatch(/event_id is required/);
@@ -490,15 +504,15 @@ describe("calendar tool", () => {
     it("calls calendar.deleteEvent with event_id and returns ok: true", async () => {
       mockCalendarDeleteEvent.mockResolvedValue(undefined);
 
-      const result = await handlers.calendar({ action: "delete", event_id: "evt-1" });
+      const result = await handlers.calendar(TEST_USER_ID, { action: "delete", event_id: "evt-1" });
 
-      expect(mockCalendarDeleteEvent).toHaveBeenCalledWith("evt-1");
+      expect(mockCalendarDeleteEvent).toHaveBeenCalledWith(mockAuthClient, "evt-1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.ok).toBe(true);
     });
 
     it("returns error dict when event_id is missing", async () => {
-      const result = await handlers.calendar({ action: "delete" });
+      const result = await handlers.calendar(TEST_USER_ID, { action: "delete" });
 
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).error).toMatch(/event_id is required/);
@@ -510,13 +524,14 @@ describe("calendar tool", () => {
       const freeBusy = { primary: { busy: [] } };
       mockCalendarCheckFreeBusy.mockResolvedValue(freeBusy);
 
-      const result = await handlers.calendar({
+      const result = await handlers.calendar(TEST_USER_ID, {
         action: "free_busy",
         time_min: "2024-01-15T00:00:00Z",
         time_max: "2024-01-15T23:59:59Z",
       });
 
       expect(mockCalendarCheckFreeBusy).toHaveBeenCalledWith(
+        mockAuthClient,
         "2024-01-15T00:00:00Z",
         "2024-01-15T23:59:59Z",
       );
@@ -532,13 +547,13 @@ describe("drive tool", () => {
       const files = [{ id: "file-1", name: "Document.gdoc" }];
       mockDriveSearchFiles.mockResolvedValue(files);
 
-      const result = await handlers.drive({
+      const result = await handlers.drive(TEST_USER_ID, {
         action: "search",
         query: "project proposal",
         max_results: 10,
       });
 
-      expect(mockDriveSearchFiles).toHaveBeenCalledWith("project proposal", { maxResults: 10 });
+      expect(mockDriveSearchFiles).toHaveBeenCalledWith(mockAuthClient, "project proposal", { maxResults: 10 });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed[0].id).toBe("file-1");
     });
@@ -549,9 +564,9 @@ describe("drive tool", () => {
       const files = [{ id: "file-1", name: "Recent.gdoc" }];
       mockDriveListRecentFiles.mockResolvedValue(files);
 
-      const result = await handlers.drive({ action: "list_recent", max_results: 5 });
+      const result = await handlers.drive(TEST_USER_ID, { action: "list_recent", max_results: 5 });
 
-      expect(mockDriveListRecentFiles).toHaveBeenCalledWith(5);
+      expect(mockDriveListRecentFiles).toHaveBeenCalledWith(mockAuthClient, 5);
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed[0].id).toBe("file-1");
     });
@@ -562,15 +577,15 @@ describe("drive tool", () => {
       const meta = { id: "file-1", name: "Doc.gdoc", mimeType: "application/vnd.google-apps.document" };
       mockDriveGetFileMetadata.mockResolvedValue(meta);
 
-      const result = await handlers.drive({ action: "metadata", file_id: "file-1" });
+      const result = await handlers.drive(TEST_USER_ID, { action: "metadata", file_id: "file-1" });
 
-      expect(mockDriveGetFileMetadata).toHaveBeenCalledWith("file-1");
+      expect(mockDriveGetFileMetadata).toHaveBeenCalledWith(mockAuthClient, "file-1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.name).toBe("Doc.gdoc");
     });
 
     it("returns error dict when file_id is missing", async () => {
-      const result = await handlers.drive({ action: "metadata" });
+      const result = await handlers.drive(TEST_USER_ID, { action: "metadata" });
 
       expect(result.isError).toBe(true);
       expect(JSON.parse(result.content[0].text).error).toMatch(/file_id is required/);
@@ -581,9 +596,9 @@ describe("drive tool", () => {
     it("calls drive.readDocument with file_id", async () => {
       mockDriveReadDocument.mockResolvedValue("Document content here");
 
-      const result = await handlers.drive({ action: "read", file_id: "file-1" });
+      const result = await handlers.drive(TEST_USER_ID, { action: "read", file_id: "file-1" });
 
-      expect(mockDriveReadDocument).toHaveBeenCalledWith("file-1");
+      expect(mockDriveReadDocument).toHaveBeenCalledWith(mockAuthClient, "file-1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed).toBe("Document content here");
     });

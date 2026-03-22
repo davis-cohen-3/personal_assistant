@@ -130,13 +130,17 @@ export default function CalendarView({ calendarHook }: Props) {
                 No events
               </p>
             ) : (
-              <div>
+              <div className="px-8 space-y-1.5 py-1">
                 {dayEvents.map((event) => (
                   <div key={event.id}>
                     <button
                       type="button"
-                      className={`w-full text-left px-8 py-3 transition-colors flex items-center gap-4 group ${
-                        activeEvent === event.id ? "bg-accent" : "hover:bg-muted/60"
+                      className={`w-full text-left px-4 py-2.5 rounded-lg transition-colors flex items-center gap-4 group border-l-2 ${
+                        activeEvent === event.id
+                          ? "bg-accent border-l-primary"
+                          : past
+                            ? "hover:bg-muted/40 border-l-muted-foreground/30"
+                            : "hover:bg-muted/60 border-l-primary/60"
                       }`}
                       onClick={() => setActiveEvent(activeEvent === event.id ? null : event.id)}
                     >
@@ -167,7 +171,7 @@ export default function CalendarView({ calendarHook }: Props) {
                     </button>
 
                     {activeEvent === event.id && (
-                      <div className="border-y border-border bg-accent/50">
+                      <div className="border-y border-border bg-accent/50 rounded-lg mt-1">
                         <EventDetail eventId={event.id} onClose={() => setActiveEvent(null)} />
                       </div>
                     )}

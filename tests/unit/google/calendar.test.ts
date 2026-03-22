@@ -33,10 +33,6 @@ vi.mock("googleapis", () => ({
   },
 }));
 
-vi.mock("../../../src/server/google/auth.js", () => ({
-  getAuthClient: vi.fn(() => ({})),
-}));
-
 import {
   checkFreeBusy,
   createEvent,
@@ -46,6 +42,8 @@ import {
   parseEvent,
   updateEvent,
 } from "../../../src/server/google/calendar.js";
+
+const mockAuth = {} as never;
 
 const makeTimedEvent = (overrides?: object) => ({
   id: "event1",
@@ -81,7 +79,7 @@ describe("listEvents", () => {
   it("calls events.list with singleEvents and orderBy startTime", async () => {
     mockEventsList.mockResolvedValue({ data: { items: [makeTimedEvent()] } });
 
-    await listEvents("2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z");
+    await listEvents(mockAuth, "2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z");
 
     expect(mockEventsList).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -97,7 +95,7 @@ describe("listEvents", () => {
   it("returns parsed events", async () => {
     mockEventsList.mockResolvedValue({ data: { items: [makeTimedEvent()] } });
 
-    const result = await listEvents("2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z");
+    const result = await listEvents(mockAuth, "2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z");
 
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("event1");
@@ -107,7 +105,7 @@ describe("listEvents", () => {
   it("passes maxResults opt when provided", async () => {
     mockEventsList.mockResolvedValue({ data: { items: [] } });
 
-    await listEvents("2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z", { maxResults: 50 });
+    await listEvents(mockAuth, "2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z", { maxResults: 50 });
 
     expect(mockEventsList).toHaveBeenCalledWith(
       expect.objectContaining({ maxResults: 50 }),
@@ -117,7 +115,7 @@ describe("listEvents", () => {
   it("passes q opt when provided", async () => {
     mockEventsList.mockResolvedValue({ data: { items: [] } });
 
-    await listEvents("2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z", { q: "standup" });
+    await listEvents(mockAuth, "2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z", { q: "standup" });
 
     expect(mockEventsList).toHaveBeenCalledWith(
       expect.objectContaining({ q: "standup" }),
@@ -127,7 +125,7 @@ describe("listEvents", () => {
   it("returns empty array when no items", async () => {
     mockEventsList.mockResolvedValue({ data: {} });
 
-    const result = await listEvents("2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z");
+    const result = await listEvents(mockAuth, "2024-04-01T00:00:00Z", "2024-04-07T23:59:59Z");
 
     expect(result).toEqual([]);
   });
@@ -137,7 +135,7 @@ describe("getEvent", () => {
   it("calls events.get with calendarId primary", async () => {
     mockEventsGet.mockResolvedValue({ data: makeTimedEvent() });
 
-    await getEvent("event1");
+    await getEvent(mockAuth, "event1");
 
     expect(mockEventsGet).toHaveBeenCalledWith({
       calendarId: "primary",
@@ -148,7 +146,7 @@ describe("getEvent", () => {
   it("returns parsed event", async () => {
     mockEventsGet.mockResolvedValue({ data: makeTimedEvent() });
 
-    const result = await getEvent("event1");
+    const result = await getEvent(mockAuth, "event1");
 
     expect(result.id).toBe("event1");
     expect(result.isAllDay).toBe(false);
@@ -160,7 +158,7 @@ describe("createEvent", () => {
   it("calls events.insert with sendUpdates all", async () => {
     mockEventsInsert.mockResolvedValue({ data: makeTimedEvent() });
 
-    await createEvent({
+    await createEvent(mockAuth, {
       summary: "New Meeting",
       start: "2024-04-10T09:00:00Z",
       end: "2024-04-10T10:00:00Z",
@@ -177,7 +175,7 @@ describe("createEvent", () => {
   it("passes event fields in requestBody", async () => {
     mockEventsInsert.mockResolvedValue({ data: makeTimedEvent() });
 
-    await createEvent({
+    await createEvent(mockAuth, {
       summary: "New Meeting",
       start: "2024-04-10T09:00:00Z",
       end: "2024-04-10T10:00:00Z",
@@ -197,7 +195,7 @@ describe("createEvent", () => {
   it("returns parsed event", async () => {
     mockEventsInsert.mockResolvedValue({ data: makeTimedEvent() });
 
-    const result = await createEvent({
+    const result = await createEvent(mockAuth, {
       summary: "New Meeting",
       start: "2024-04-10T09:00:00Z",
       end: "2024-04-10T10:00:00Z",
@@ -211,7 +209,7 @@ describe("updateEvent", () => {
   it("calls events.patch with sendUpdates all", async () => {
     mockEventsPatch.mockResolvedValue({ data: makeTimedEvent({ summary: "Updated" }) });
 
-    await updateEvent("event1", { summary: "Updated" });
+    await updateEvent(mockAuth, "event1", { summary: "Updated" });
 
     expect(mockEventsPatch).toHaveBeenCalledWith({
       calendarId: "primary",
@@ -224,7 +222,7 @@ describe("updateEvent", () => {
   it("returns parsed updated event", async () => {
     mockEventsPatch.mockResolvedValue({ data: makeTimedEvent({ summary: "Updated" }) });
 
-    const result = await updateEvent("event1", { summary: "Updated" });
+    const result = await updateEvent(mockAuth, "event1", { summary: "Updated" });
 
     expect(result.summary).toBe("Updated");
   });
@@ -234,7 +232,7 @@ describe("deleteEvent", () => {
   it("calls events.delete with sendUpdates all", async () => {
     mockEventsDelete.mockResolvedValue({ data: {} });
 
-    await deleteEvent("event1");
+    await deleteEvent(mockAuth, "event1");
 
     expect(mockEventsDelete).toHaveBeenCalledWith({
       calendarId: "primary",
@@ -250,7 +248,7 @@ describe("checkFreeBusy", () => {
       data: { calendars: { primary: { busy: [] } } },
     });
 
-    await checkFreeBusy("2024-04-01T00:00:00Z", "2024-04-01T23:59:59Z");
+    await checkFreeBusy(mockAuth, "2024-04-01T00:00:00Z", "2024-04-01T23:59:59Z");
 
     expect(mockFreebusyQuery).toHaveBeenCalledWith({
       requestBody: expect.objectContaining({
@@ -268,7 +266,7 @@ describe("checkFreeBusy", () => {
       },
     });
 
-    await checkFreeBusy("2024-04-01T00:00:00Z", "2024-04-01T23:59:59Z", [
+    await checkFreeBusy(mockAuth, "2024-04-01T00:00:00Z", "2024-04-01T23:59:59Z", [
       "cal1@group.calendar.google.com",
     ]);
 
@@ -293,6 +291,7 @@ describe("checkFreeBusy", () => {
     });
 
     const result = await checkFreeBusy(
+      mockAuth,
       "2024-04-01T00:00:00Z",
       "2024-04-01T23:59:59Z",
     );

@@ -106,10 +106,24 @@ vi.mock("../../src/server/db/queries.js", () => ({
   listMessagesByConversation: mockListMessagesByConversation,
 }));
 
+const { mockAuthClient } = vi.hoisted(() => ({
+  mockAuthClient: { setCredentials: vi.fn() },
+}));
+vi.mock("../../src/server/google/auth.js", () => ({
+  withUserTokens: vi.fn().mockResolvedValue(mockAuthClient),
+}));
+
 import { apiRoutes } from "../../src/server/routes.js";
+
+const TEST_USER_ID = "user-1";
 
 function createTestApp() {
   const app = new Hono();
+  // Inject test userId into context before routes
+  app.use("*", async (c, next) => {
+    c.set("userId", TEST_USER_ID);
+    await next();
+  });
   app.onError((err, c) => {
     if (err instanceof ZodError) {
       return c.json({ error: "Validation failed", issues: err.issues }, 400);
@@ -148,7 +162,7 @@ describe("POST /api/gmail/sync", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(syncResult);
-    expect(mockEmailSyncInbox).toHaveBeenCalledWith(25);
+    expect(mockEmailSyncInbox).toHaveBeenCalledWith(TEST_USER_ID, 25);
   });
 });
 
@@ -161,7 +175,7 @@ describe("GET /api/gmail/threads", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(threads);
-    expect(mockEmailSearch).toHaveBeenCalledWith("is:inbox", 25);
+    expect(mockEmailSearch).toHaveBeenCalledWith(TEST_USER_ID, "is:inbox", 25);
   });
 
   it("returns 400 when maxResults exceeds 25", async () => {
@@ -190,7 +204,7 @@ describe("GET /api/gmail/threads/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(thread);
-    expect(mockEmailGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockEmailGetThread).toHaveBeenCalledWith(TEST_USER_ID, "thread-1");
   });
 });
 
@@ -207,6 +221,7 @@ describe("POST /api/gmail/send", () => {
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual(sentResult);
     expect(mockEmailSendMessage).toHaveBeenCalledWith(
+      TEST_USER_ID,
       "alice@example.com",
       "Hi",
       "Hello!",
@@ -237,7 +252,7 @@ describe("POST /api/gmail/threads/:id/reply", () => {
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual(replyResult);
-    expect(mockEmailReplyToThread).toHaveBeenCalledWith("thread-1", "msg-original", "Reply text");
+    expect(mockEmailReplyToThread).toHaveBeenCalledWith(TEST_USER_ID, "thread-1", "msg-original", "Reply text");
   });
 
   it("returns 400 when body is missing", async () => {
@@ -271,7 +286,7 @@ describe("POST /api/gmail/threads/:id/trash", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockEmailTrashThread).toHaveBeenCalledWith("thread-1");
+    expect(mockEmailTrashThread).toHaveBeenCalledWith(TEST_USER_ID, "thread-1");
   });
 });
 
@@ -285,7 +300,7 @@ describe("POST /api/gmail/messages/:id/read", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockEmailMarkAsRead).toHaveBeenCalledWith("msg-1");
+    expect(mockEmailMarkAsRead).toHaveBeenCalledWith(TEST_USER_ID, "msg-1");
   });
 });
 
@@ -327,7 +342,7 @@ describe("GET /api/calendar/events/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(event);
-    expect(mockCalendarGetEvent).toHaveBeenCalledWith("event-1");
+    expect(mockCalendarGetEvent).toHaveBeenCalledWith(mockAuthClient, "event-1");
   });
 });
 
@@ -343,7 +358,7 @@ describe("PATCH /api/calendar/events/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(updated);
-    expect(mockCalendarUpdateEvent).toHaveBeenCalledWith("event-1", { summary: "Updated Meeting" });
+    expect(mockCalendarUpdateEvent).toHaveBeenCalledWith(mockAuthClient, "event-1", { summary: "Updated Meeting" });
   });
 });
 
@@ -355,7 +370,7 @@ describe("DELETE /api/calendar/events/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockCalendarDeleteEvent).toHaveBeenCalledWith("event-1");
+    expect(mockCalendarDeleteEvent).toHaveBeenCalledWith(mockAuthClient, "event-1");
   });
 });
 
@@ -390,6 +405,7 @@ describe("GET /api/buckets", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(buckets);
+    expect(mockListBucketsWithThreads).toHaveBeenCalledWith(TEST_USER_ID);
   });
 });
 
@@ -408,8 +424,8 @@ describe("POST /api/buckets", () => {
     const body = await res.json();
     expect(body.rebucket_required).toBe(true);
     expect(body.name).toBe("Work");
-    expect(mockCreateBucket).toHaveBeenCalledWith("Work", "Work emails");
-    expect(mockMarkAllForRebucket).toHaveBeenCalled();
+    expect(mockCreateBucket).toHaveBeenCalledWith(TEST_USER_ID, "Work", "Work emails");
+    expect(mockMarkAllForRebucket).toHaveBeenCalledWith(TEST_USER_ID);
   });
 
   it("returns 400 when name is missing", async () => {
@@ -438,6 +454,7 @@ describe("POST /api/buckets/assign", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(mockAssignThread).toHaveBeenCalledWith(
+      TEST_USER_ID,
       "thread-1",
       "00000000-0000-0000-0000-000000000001",
       undefined,
@@ -458,7 +475,7 @@ describe("PATCH /api/buckets/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(updated);
-    expect(mockUpdateBucket).toHaveBeenCalledWith("bucket-1", { name: "Updated" });
+    expect(mockUpdateBucket).toHaveBeenCalledWith(TEST_USER_ID, "bucket-1", { name: "Updated" });
   });
 });
 
@@ -470,7 +487,7 @@ describe("DELETE /api/buckets/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockDeleteBucket).toHaveBeenCalledWith("bucket-1");
+    expect(mockDeleteBucket).toHaveBeenCalledWith(TEST_USER_ID, "bucket-1");
   });
 });
 
@@ -509,7 +526,7 @@ describe("POST /api/bucket-templates/:id/apply", () => {
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual(buckets);
-    expect(mockApplyBucketTemplate).toHaveBeenCalledWith("tmpl-1");
+    expect(mockApplyBucketTemplate).toHaveBeenCalledWith(TEST_USER_ID, "tmpl-1");
   });
 });
 
@@ -524,6 +541,7 @@ describe("GET /api/conversations", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(convos);
+    expect(mockListConversations).toHaveBeenCalledWith(TEST_USER_ID);
   });
 });
 
@@ -539,7 +557,7 @@ describe("POST /api/conversations", () => {
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual(convo);
-    expect(mockCreateConversation).toHaveBeenCalledWith("New conversation");
+    expect(mockCreateConversation).toHaveBeenCalledWith(TEST_USER_ID, "New conversation");
   });
 });
 
@@ -556,6 +574,8 @@ describe("GET /api/conversations/:id", () => {
     const body = await res.json();
     expect(body.id).toBe("convo-1");
     expect(body.messages).toEqual(messages);
+    expect(mockGetConversation).toHaveBeenCalledWith(TEST_USER_ID, "convo-1");
+    expect(mockListMessagesByConversation).toHaveBeenCalledWith(TEST_USER_ID, "convo-1");
   });
 });
 
@@ -571,7 +591,7 @@ describe("PATCH /api/conversations/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(updated);
-    expect(mockUpdateConversation).toHaveBeenCalledWith("convo-1", { title: "New title" });
+    expect(mockUpdateConversation).toHaveBeenCalledWith(TEST_USER_ID, "convo-1", { title: "New title" });
   });
 });
 
@@ -583,7 +603,7 @@ describe("DELETE /api/conversations/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockDeleteConversation).toHaveBeenCalledWith("convo-1");
+    expect(mockDeleteConversation).toHaveBeenCalledWith(TEST_USER_ID, "convo-1");
   });
 });
 

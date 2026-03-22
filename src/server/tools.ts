@@ -2,6 +2,7 @@ import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import * as queries from "./db/queries.js";
 import * as email from "./email.js";
+import { withUserTokens } from "./google/auth.js";
 import * as calendar from "./google/calendar.js";
 import * as drive from "./google/drive.js";
 
@@ -15,19 +16,22 @@ function err(message: string) {
 }
 
 export const handlers = {
-  buckets: async (params: {
-    action: "list" | "create" | "update" | "delete" | "assign";
-    id?: string;
-    name?: string;
-    description?: string;
-    sort_order?: number;
-    assignments?: Array<{
-      gmail_thread_id: string;
-      bucket_id: string;
-      subject?: string;
-      snippet?: string;
-    }>;
-  }) => {
+  buckets: async (
+    userId: string,
+    params: {
+      action: "list" | "create" | "update" | "delete" | "assign";
+      id?: string;
+      name?: string;
+      description?: string;
+      sort_order?: number;
+      assignments?: Array<{
+        gmail_thread_id: string;
+        bucket_id: string;
+        subject?: string;
+        snippet?: string;
+      }>;
+    },
+  ) => {
     console.info("tool:buckets", {
       action: params.action,
       id: params.id,
@@ -36,15 +40,15 @@ export const handlers = {
     });
     switch (params.action) {
       case "list": {
-        const result = await queries.listBuckets();
+        const result = await queries.listBuckets(userId);
         console.info("tool:buckets complete", { action: "list", count: result.length });
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "create": {
         if (!params.name) return err("name is required for create action");
         if (!params.description) return err("description is required for create action");
-        const result = await queries.createBucket(params.name, params.description);
-        await queries.markAllForRebucket();
+        const result = await queries.createBucket(userId, params.name, params.description);
+        await queries.markAllForRebucket(userId);
         console.info("tool:buckets complete", {
           action: "create",
           id: result.id,
@@ -65,7 +69,7 @@ export const handlers = {
       }
       case "update": {
         if (!params.id) return err("id is required for update action");
-        const result = await queries.updateBucket(params.id, params);
+        const result = await queries.updateBucket(userId, params.id, params);
         console.info("tool:buckets complete", {
           action: "update",
           id: result.id,
@@ -75,7 +79,7 @@ export const handlers = {
       }
       case "delete": {
         if (!params.id) return err("id is required for delete action");
-        await queries.deleteBucket(params.id);
+        await queries.deleteBucket(userId, params.id);
         console.info("tool:buckets complete", { action: "delete", id: params.id });
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
@@ -84,6 +88,7 @@ export const handlers = {
         if (params.assignments.length > BATCH_SIZE)
           return err(`max ${BATCH_SIZE} assignments per batch`);
         const result = await queries.assignThreadsBatch(
+          userId,
           params.assignments.map((a) => ({
             gmailThreadId: a.gmail_thread_id,
             bucketId: a.bucket_id,
@@ -91,7 +96,7 @@ export const handlers = {
             snippet: a.snippet,
           })),
         );
-        const remaining = await queries.countUnbucketedThreads();
+        const remaining = await queries.countUnbucketedThreads(userId);
         console.info("tool:buckets complete", {
           action: "assign",
           assigned: result.length,
@@ -109,12 +114,15 @@ export const handlers = {
     }
   },
 
-  sync_email: async (params: {
-    action: "sync" | "search" | "get_thread" | "get_unbucketed";
-    query?: string;
-    max_results?: number;
-    thread_id?: string;
-  }) => {
+  sync_email: async (
+    userId: string,
+    params: {
+      action: "sync" | "search" | "get_thread" | "get_unbucketed";
+      query?: string;
+      max_results?: number;
+      thread_id?: string;
+    },
+  ) => {
     console.info("tool:sync_email", {
       action: params.action,
       query: params.query,
@@ -123,35 +131,38 @@ export const handlers = {
     });
     switch (params.action) {
       case "sync": {
-        const result = await email.syncInbox(params.max_results);
+        const result = await email.syncInbox(userId, params.max_results);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "search": {
         if (!params.query) return err("query is required for search action");
-        const result = await email.search(params.query, params.max_results);
+        const result = await email.search(userId, params.query, params.max_results);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "get_thread": {
         if (!params.thread_id) return err("thread_id is required for get_thread action");
-        const result = await email.getThread(params.thread_id);
+        const result = await email.getThread(userId, params.thread_id);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "get_unbucketed": {
-        const result = await email.getUnbucketedThreads();
+        const result = await email.getUnbucketedThreads(userId);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
     }
   },
 
-  action_email: async (params: {
-    action: "send" | "reply" | "draft" | "trash" | "mark_read";
-    to?: string;
-    cc?: string[];
-    subject?: string;
-    body?: string;
-    thread_id?: string;
-    message_id?: string;
-  }) => {
+  action_email: async (
+    userId: string,
+    params: {
+      action: "send" | "reply" | "draft" | "trash" | "mark_read";
+      to?: string;
+      cc?: string[];
+      subject?: string;
+      body?: string;
+      thread_id?: string;
+      message_id?: string;
+    },
+  ) => {
     console.info("tool:action_email", {
       action: params.action,
       to: params.to,
@@ -163,7 +174,7 @@ export const handlers = {
         if (!params.to) return err("to is required for send action");
         if (!params.subject) return err("subject is required for send action");
         if (!params.body) return err("body is required for send action");
-        await email.sendMessage(params.to, params.subject, params.body, {
+        await email.sendMessage(userId, params.to, params.subject, params.body, {
           cc: params.cc,
         });
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
@@ -172,7 +183,7 @@ export const handlers = {
         if (!params.thread_id) return err("thread_id is required for reply action");
         if (!params.message_id) return err("message_id is required for reply action");
         if (!params.body) return err("body is required for reply action");
-        await email.replyToThread(params.thread_id, params.message_id, params.body);
+        await email.replyToThread(userId, params.thread_id, params.message_id, params.body);
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "draft": {
@@ -180,6 +191,7 @@ export const handlers = {
         if (!params.subject) return err("subject is required for draft action");
         if (!params.body) return err("body is required for draft action");
         const result = await email.createDraft(
+          userId,
           params.to,
           params.subject,
           params.body,
@@ -189,30 +201,34 @@ export const handlers = {
       }
       case "trash": {
         if (!params.thread_id) return err("thread_id is required for trash action");
-        await email.trashThread(params.thread_id);
+        await email.trashThread(userId, params.thread_id);
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "mark_read": {
         if (!params.message_id) return err("message_id is required for mark_read action");
-        await email.markAsRead(params.message_id);
+        await email.markAsRead(userId, params.message_id);
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
     }
   },
 
-  calendar: async (params: {
-    action: "list" | "get" | "create" | "update" | "delete" | "free_busy";
-    time_min?: string;
-    time_max?: string;
-    event_id?: string;
-    summary?: string;
-    description?: string;
-    location?: string;
-    start?: string;
-    end?: string;
-    attendees?: string[];
-    query?: string;
-  }) => {
+  calendar: async (
+    userId: string,
+    params: {
+      action: "list" | "get" | "create" | "update" | "delete" | "free_busy";
+      time_min?: string;
+      time_max?: string;
+      event_id?: string;
+      summary?: string;
+      description?: string;
+      location?: string;
+      start?: string;
+      end?: string;
+      attendees?: string[];
+      query?: string;
+    },
+  ) => {
+    const auth = await withUserTokens(userId);
     console.info("tool:calendar", {
       action: params.action,
       event_id: params.event_id,
@@ -224,21 +240,21 @@ export const handlers = {
       case "list": {
         if (!params.time_min) return err("time_min is required for list action");
         if (!params.time_max) return err("time_max is required for list action");
-        const result = await calendar.listEvents(params.time_min, params.time_max, {
+        const result = await calendar.listEvents(auth, params.time_min, params.time_max, {
           q: params.query,
         });
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "get": {
         if (!params.event_id) return err("event_id is required for get action");
-        const result = await calendar.getEvent(params.event_id);
+        const result = await calendar.getEvent(auth, params.event_id);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "create": {
         if (!params.summary) return err("summary is required for create action");
         if (!params.start) return err("start is required for create action");
         if (!params.end) return err("end is required for create action");
-        const result = await calendar.createEvent({
+        const result = await calendar.createEvent(auth, {
           summary: params.summary,
           description: params.description,
           location: params.location,
@@ -250,7 +266,7 @@ export const handlers = {
       }
       case "update": {
         if (!params.event_id) return err("event_id is required for update action");
-        const result = await calendar.updateEvent(params.event_id, {
+        const result = await calendar.updateEvent(auth, params.event_id, {
           summary: params.summary,
           description: params.description,
           location: params.location,
@@ -262,24 +278,28 @@ export const handlers = {
       }
       case "delete": {
         if (!params.event_id) return err("event_id is required for delete action");
-        await calendar.deleteEvent(params.event_id);
+        await calendar.deleteEvent(auth, params.event_id);
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "free_busy": {
         if (!params.time_min) return err("time_min is required for free_busy action");
         if (!params.time_max) return err("time_max is required for free_busy action");
-        const result = await calendar.checkFreeBusy(params.time_min, params.time_max);
+        const result = await calendar.checkFreeBusy(auth, params.time_min, params.time_max);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
     }
   },
 
-  drive: async (params: {
-    action: "search" | "list_recent" | "read" | "metadata";
-    query?: string;
-    file_id?: string;
-    max_results?: number;
-  }) => {
+  drive: async (
+    userId: string,
+    params: {
+      action: "search" | "list_recent" | "read" | "metadata";
+      query?: string;
+      file_id?: string;
+      max_results?: number;
+    },
+  ) => {
+    const auth = await withUserTokens(userId);
     console.info("tool:drive", {
       action: params.action,
       query: params.query,
@@ -288,28 +308,30 @@ export const handlers = {
     switch (params.action) {
       case "search": {
         if (!params.query) return err("query is required for search action");
-        const result = await drive.searchFiles(params.query, { maxResults: params.max_results });
+        const result = await drive.searchFiles(auth, params.query, {
+          maxResults: params.max_results,
+        });
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "list_recent": {
-        const result = await drive.listRecentFiles(params.max_results);
+        const result = await drive.listRecentFiles(auth, params.max_results);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "read": {
         if (!params.file_id) return err("file_id is required for read action");
-        const result = await drive.readDocument(params.file_id);
+        const result = await drive.readDocument(auth, params.file_id);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
       case "metadata": {
         if (!params.file_id) return err("file_id is required for metadata action");
-        const result = await drive.getFileMetadata(params.file_id);
+        const result = await drive.getFileMetadata(auth, params.file_id);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
     }
   },
 };
 
-export function createCustomMcpServer() {
+export function createCustomMcpServer(userId: string) {
   return createSdkMcpServer({
     name: "assistant-tools",
     version: "1.0.0",
@@ -336,7 +358,7 @@ export function createCustomMcpServer() {
             .optional()
             .describe("Thread-to-bucket assignments (1-25). For assign action."),
         },
-        handlers.buckets,
+        (params) => handlers.buckets(userId, params),
       ),
 
       tool(
@@ -354,7 +376,7 @@ export function createCustomMcpServer() {
             .describe("Max threads for sync/search (default 200 for sync, 25 for search)"),
           thread_id: z.string().optional().describe("Gmail thread ID for get_thread action"),
         },
-        handlers.sync_email,
+        (params) => handlers.sync_email(userId, params),
       ),
 
       tool(
@@ -369,7 +391,7 @@ export function createCustomMcpServer() {
           thread_id: z.string().optional(),
           message_id: z.string().optional(),
         },
-        handlers.action_email,
+        (params) => handlers.action_email(userId, params),
       ),
 
       tool(
@@ -388,7 +410,7 @@ export function createCustomMcpServer() {
           attendees: z.array(z.string()).optional().describe("Email addresses (create, update)"),
           query: z.string().optional().describe("Free text search (list)"),
         },
-        handlers.calendar,
+        (params) => handlers.calendar(userId, params),
       ),
 
       tool(
@@ -400,7 +422,7 @@ export function createCustomMcpServer() {
           file_id: z.string().optional().describe("File ID (read, metadata)"),
           max_results: z.number().optional().describe("Max results (search, list_recent)"),
         },
-        handlers.drive,
+        (params) => handlers.drive(userId, params),
       ),
     ],
   });

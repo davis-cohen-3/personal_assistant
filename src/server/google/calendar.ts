@@ -1,5 +1,5 @@
 import { type calendar_v3, google } from "googleapis";
-import { getAuthClient } from "./auth.js";
+import type { OAuth2Client } from "./auth.js";
 
 export interface CalendarEventAttendee {
   email: string;
@@ -74,6 +74,7 @@ export function parseEvent(data: calendar_v3.Schema$Event): CalendarEvent {
 }
 
 export async function listEvents(
+  auth: OAuth2Client,
   timeMin: string,
   timeMax: string,
   opts?: ListEventsOptions,
@@ -84,7 +85,7 @@ export async function listEvents(
     maxResults: opts?.maxResults,
     q: opts?.q,
   });
-  const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
+  const calendar = google.calendar({ version: "v3", auth });
   const res = await calendar.events.list({
     calendarId: "primary",
     timeMin,
@@ -98,21 +99,24 @@ export async function listEvents(
   return events;
 }
 
-export async function getEvent(eventId: string): Promise<CalendarEvent> {
+export async function getEvent(auth: OAuth2Client, eventId: string): Promise<CalendarEvent> {
   console.info("calendar.getEvent", { eventId });
-  const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
+  const calendar = google.calendar({ version: "v3", auth });
   const res = await calendar.events.get({ calendarId: "primary", eventId });
   return parseEvent(res.data);
 }
 
-export async function createEvent(input: CreateEventInput): Promise<CalendarEvent> {
+export async function createEvent(
+  auth: OAuth2Client,
+  input: CreateEventInput,
+): Promise<CalendarEvent> {
   console.info("calendar.createEvent", {
     summary: input.summary,
     start: input.start,
     end: input.end,
     attendees: input.attendees,
   });
-  const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
+  const calendar = google.calendar({ version: "v3", auth });
 
   const startField = input.timeZone
     ? { dateTime: input.start, timeZone: input.timeZone }
@@ -137,6 +141,7 @@ export async function createEvent(input: CreateEventInput): Promise<CalendarEven
 }
 
 export async function updateEvent(
+  auth: OAuth2Client,
   eventId: string,
   patch: Partial<{
     summary: string;
@@ -151,7 +156,7 @@ export async function updateEvent(
     eventId,
     fields: Object.keys(patch).filter((k) => patch[k as keyof typeof patch] !== undefined),
   });
-  const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
+  const calendar = google.calendar({ version: "v3", auth });
   const requestBody: calendar_v3.Schema$Event = {};
   if (patch.summary !== undefined) requestBody.summary = patch.summary;
   if (patch.description !== undefined) requestBody.description = patch.description;
@@ -170,9 +175,9 @@ export async function updateEvent(
   return parseEvent(res.data);
 }
 
-export async function deleteEvent(eventId: string): Promise<void> {
+export async function deleteEvent(auth: OAuth2Client, eventId: string): Promise<void> {
   console.info("calendar.deleteEvent", { eventId });
-  const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
+  const calendar = google.calendar({ version: "v3", auth });
   await calendar.events.delete({
     calendarId: "primary",
     eventId,
@@ -181,12 +186,13 @@ export async function deleteEvent(eventId: string): Promise<void> {
 }
 
 export async function checkFreeBusy(
+  auth: OAuth2Client,
   timeMin: string,
   timeMax: string,
   calendarIds?: string[],
 ): Promise<FreeBusyResult> {
   console.info("calendar.checkFreeBusy", { timeMin, timeMax, calendarIds });
-  const calendar = google.calendar({ version: "v3", auth: getAuthClient() });
+  const calendar = google.calendar({ version: "v3", auth });
   const ids = calendarIds ?? ["primary"];
   const res = await calendar.freebusy.query({
     requestBody: {
