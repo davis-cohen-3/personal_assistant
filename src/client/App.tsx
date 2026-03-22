@@ -5,7 +5,7 @@ import InboxView from "./components/InboxView";
 import { useBuckets } from "./hooks/useBuckets";
 import { useCalendarEvents } from "./hooks/useCalendarEvents";
 import { useConversations } from "./hooks/useConversations";
-import { setCsrfToken } from "./lib/fetchApi";
+import { fetchApi, setCsrfToken } from "./lib/fetchApi";
 
 type Tab = "inbox" | "calendar";
 
@@ -61,6 +61,8 @@ function UserMenu() {
 function AuthenticatedApp() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("inbox");
+  const [isGrouping, setIsGrouping] = useState(false);
+  const [queuedMessage, setQueuedMessage] = useState<string | null>(null);
 
   const bucketsHook = useBuckets();
   const calendarHook = useCalendarEvents();
@@ -72,6 +74,7 @@ function AuthenticatedApp() {
   const handleAgentDone = useCallback(
     (toolNames: string[]) => {
       conversationsHook.refetch();
+      setIsGrouping(false);
       if (toolNames.length === 0) return;
       if (activeTabRef.current === "inbox") {
         bucketsHook.refetch();
@@ -80,6 +83,43 @@ function AuthenticatedApp() {
       }
     },
     [bucketsHook.refetch, calendarHook.refetch, conversationsHook.refetch],
+  );
+
+  const handleGroupEmails = useCallback(
+    async (bucketDefs: Array<{ name: string; description: string }>) => {
+      // Delete existing buckets (agent will reclassify all threads)
+      await Promise.all(
+        bucketsHook.buckets.map((b) => fetchApi(`/api/buckets/${b.id}`, { method: "DELETE" })),
+      );
+
+      // Create new buckets
+      for (const bucket of bucketDefs) {
+        const description = bucket.description || `Emails related to ${bucket.name.toLowerCase()}`;
+        const res = await fetchApi("/api/buckets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: bucket.name, description }),
+        });
+        if (!res.ok) {
+          throw new Error(`Failed to create bucket "${bucket.name}"`);
+        }
+      }
+
+      await bucketsHook.refetch();
+
+      let convId = activeConversationId;
+      if (!convId) {
+        const conv = await conversationsHook.createConversation();
+        convId = conv.id;
+        setActiveConversationId(convId);
+      }
+
+      setIsGrouping(true);
+      setQueuedMessage(
+        "I've set up my email categories. Sync my last 200 email threads and classify every one into the existing buckets. Process all batches until none remain. Proceed immediately without asking for confirmation.",
+      );
+    },
+    [activeConversationId, bucketsHook, conversationsHook.createConversation],
   );
 
   const handleTabSwitch = useCallback((tab: Tab) => {
@@ -161,7 +201,11 @@ function AuthenticatedApp() {
         {/* Dashboard content */}
         <div className="flex-1 overflow-y-auto min-w-0">
           {activeTab === "inbox" ? (
-            <InboxView bucketsHook={bucketsHook} />
+            <InboxView
+              bucketsHook={bucketsHook}
+              onGroupEmails={handleGroupEmails}
+              isGrouping={isGrouping}
+            />
           ) : (
             <CalendarView calendarHook={calendarHook} />
           )}
@@ -175,6 +219,9 @@ function AuthenticatedApp() {
           onAgentDone={handleAgentDone}
           onTitleUpdate={() => conversationsHook.refetch()}
           conversationsHook={conversationsHook}
+          disabled={isGrouping}
+          queuedMessage={queuedMessage}
+          onQueuedMessageSent={() => setQueuedMessage(null)}
         />
       </div>
     </div>

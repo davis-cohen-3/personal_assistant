@@ -410,6 +410,26 @@ describe("calendar tool", () => {
     });
   });
 
+  describe("get action", () => {
+    it("calls calendar.getEvent with event_id", async () => {
+      const event = { id: "evt-1", summary: "Stand-up" };
+      mockCalendarGetEvent.mockResolvedValue(event);
+
+      const result = await handlers.calendar({ action: "get", event_id: "evt-1" });
+
+      expect(mockCalendarGetEvent).toHaveBeenCalledWith("evt-1");
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.id).toBe("evt-1");
+    });
+
+    it("returns error dict when event_id is missing", async () => {
+      const result = await handlers.calendar({ action: "get" });
+
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toMatch(/event_id is required/);
+    });
+  });
+
   describe("create action", () => {
     it("calls calendar.createEvent with event fields", async () => {
       const event = { id: "evt-new", summary: "Stand-up" };
@@ -435,6 +455,53 @@ describe("calendar tool", () => {
       });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.id).toBe("evt-new");
+    });
+  });
+
+  describe("update action", () => {
+    it("calls calendar.updateEvent with event_id and fields", async () => {
+      const updated = { id: "evt-1", summary: "Updated Stand-up" };
+      mockCalendarUpdateEvent.mockResolvedValue(updated);
+
+      const result = await handlers.calendar({
+        action: "update",
+        event_id: "evt-1",
+        summary: "Updated Stand-up",
+        location: "Room B",
+      });
+
+      expect(mockCalendarUpdateEvent).toHaveBeenCalledWith("evt-1", expect.objectContaining({
+        summary: "Updated Stand-up",
+        location: "Room B",
+      }));
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.id).toBe("evt-1");
+    });
+
+    it("returns error dict when event_id is missing", async () => {
+      const result = await handlers.calendar({ action: "update", summary: "No ID" });
+
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toMatch(/event_id is required/);
+    });
+  });
+
+  describe("delete action", () => {
+    it("calls calendar.deleteEvent with event_id and returns ok: true", async () => {
+      mockCalendarDeleteEvent.mockResolvedValue(undefined);
+
+      const result = await handlers.calendar({ action: "delete", event_id: "evt-1" });
+
+      expect(mockCalendarDeleteEvent).toHaveBeenCalledWith("evt-1");
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.ok).toBe(true);
+    });
+
+    it("returns error dict when event_id is missing", async () => {
+      const result = await handlers.calendar({ action: "delete" });
+
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toMatch(/event_id is required/);
     });
   });
 
@@ -474,6 +541,39 @@ describe("drive tool", () => {
       expect(mockDriveSearchFiles).toHaveBeenCalledWith("project proposal", { maxResults: 10 });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed[0].id).toBe("file-1");
+    });
+  });
+
+  describe("list_recent action", () => {
+    it("calls drive.listRecentFiles with max_results", async () => {
+      const files = [{ id: "file-1", name: "Recent.gdoc" }];
+      mockDriveListRecentFiles.mockResolvedValue(files);
+
+      const result = await handlers.drive({ action: "list_recent", max_results: 5 });
+
+      expect(mockDriveListRecentFiles).toHaveBeenCalledWith(5);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed[0].id).toBe("file-1");
+    });
+  });
+
+  describe("metadata action", () => {
+    it("calls drive.getFileMetadata with file_id", async () => {
+      const meta = { id: "file-1", name: "Doc.gdoc", mimeType: "application/vnd.google-apps.document" };
+      mockDriveGetFileMetadata.mockResolvedValue(meta);
+
+      const result = await handlers.drive({ action: "metadata", file_id: "file-1" });
+
+      expect(mockDriveGetFileMetadata).toHaveBeenCalledWith("file-1");
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.name).toBe("Doc.gdoc");
+    });
+
+    it("returns error dict when file_id is missing", async () => {
+      const result = await handlers.drive({ action: "metadata" });
+
+      expect(result.isError).toBe(true);
+      expect(JSON.parse(result.content[0].text).error).toMatch(/file_id is required/);
     });
   });
 

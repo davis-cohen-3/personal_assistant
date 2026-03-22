@@ -11,6 +11,7 @@ const {
   mockEmailReplyToThread,
   mockEmailTrashThread,
   mockEmailMarkAsRead,
+  mockEmailSyncInbox,
 } = vi.hoisted(() => ({
   mockEmailSearch: vi.fn(),
   mockEmailGetThread: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockEmailReplyToThread: vi.fn(),
   mockEmailTrashThread: vi.fn(),
   mockEmailMarkAsRead: vi.fn(),
+  mockEmailSyncInbox: vi.fn(),
 }));
 
 const {
@@ -75,6 +77,7 @@ vi.mock("../../src/server/email.js", () => ({
   replyToThread: mockEmailReplyToThread,
   trashThread: mockEmailTrashThread,
   markAsRead: mockEmailMarkAsRead,
+  syncInbox: mockEmailSyncInbox,
 }));
 
 vi.mock("../../src/server/google/calendar.js", () => ({
@@ -135,6 +138,19 @@ beforeEach(() => {
 });
 
 // ─── Gmail routes ────────────────────────────────────────────────────────────
+
+describe("POST /api/gmail/sync", () => {
+  it("returns 200 and calls email.syncInbox(25)", async () => {
+    const syncResult = { new: 3, updated: 2 };
+    mockEmailSyncInbox.mockResolvedValue(syncResult);
+
+    const res = await app.request("/api/gmail/sync", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(syncResult);
+    expect(mockEmailSyncInbox).toHaveBeenCalledWith(25);
+  });
+});
 
 describe("GET /api/gmail/threads", () => {
   it("returns 200 with threads array", async () => {
@@ -299,6 +315,47 @@ describe("GET /api/calendar/events", () => {
 
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("Validation failed");
+  });
+});
+
+describe("GET /api/calendar/events/:id", () => {
+  it("returns 200 with event", async () => {
+    const event = { id: "event-1", summary: "Meeting" };
+    mockCalendarGetEvent.mockResolvedValue(event);
+
+    const res = await app.request("/api/calendar/events/event-1");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(event);
+    expect(mockCalendarGetEvent).toHaveBeenCalledWith("event-1");
+  });
+});
+
+describe("PATCH /api/calendar/events/:id", () => {
+  it("returns 200 with updated event", async () => {
+    const updated = { id: "event-1", summary: "Updated Meeting" };
+    mockCalendarUpdateEvent.mockResolvedValue(updated);
+
+    const res = await app.request("/api/calendar/events/event-1", {
+      method: "PATCH",
+      ...jsonBody({ summary: "Updated Meeting" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(updated);
+    expect(mockCalendarUpdateEvent).toHaveBeenCalledWith("event-1", { summary: "Updated Meeting" });
+  });
+});
+
+describe("DELETE /api/calendar/events/:id", () => {
+  it("returns 200 { ok: true }", async () => {
+    mockCalendarDeleteEvent.mockResolvedValue(undefined);
+
+    const res = await app.request("/api/calendar/events/event-1", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(mockCalendarDeleteEvent).toHaveBeenCalledWith("event-1");
   });
 });
 

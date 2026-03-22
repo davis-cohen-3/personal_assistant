@@ -7,7 +7,7 @@ import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ZodError } from "zod";
-import { handleWebSocket, initAgent } from "./agent.js";
+import { handleWebSocket } from "./agent.js";
 import { authMiddleware, googleAuthRoutes } from "./auth.js";
 import { AppError } from "./exceptions.js";
 import { loadTokens } from "./google/index.js";
@@ -103,10 +103,6 @@ injectWebSocket(server);
 // Load persisted Google tokens and agent skills on startup
 loadTokens().catch((err) => {
   console.error("Failed to load Google tokens at startup", { error: err });
-});
-
-initAgent().catch((err) => {
-  console.error("Failed to init agent skills at startup", { error: err });
 });
 
 function shutdown() {

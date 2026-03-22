@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import type { BucketThread, useBuckets } from "@/hooks/useBuckets";
+import type { BucketDraft } from "./GroupEmailsSetup";
+import GroupEmailsSetup from "./GroupEmailsSetup";
 import ThreadDetail from "./ThreadDetail";
 
 interface Props {
   bucketsHook: ReturnType<typeof useBuckets>;
+  onGroupEmails: (buckets: BucketDraft[]) => Promise<void>;
+  isGrouping: boolean;
 }
 
 const THREADS_PER_BUCKET = 5;
@@ -34,10 +38,11 @@ function senderDisplay(thread: BucketThread): string {
   return "Unknown";
 }
 
-export default function InboxView({ bucketsHook }: Props) {
+export default function InboxView({ bucketsHook, onGroupEmails, isGrouping }: Props) {
   const { buckets, loading, error } = bucketsHook;
   const [expandedBuckets, setExpandedBuckets] = useState<Set<string>>(new Set());
   const [expandedThread, setExpandedThread] = useState<string | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
 
   const toggleBucketExpand = (bucketId: string) => {
     setExpandedBuckets((prev) => {
@@ -63,6 +68,23 @@ export default function InboxView({ bucketsHook }: Props) {
     return <div className="px-8 py-6 text-sm text-destructive">{error}</div>;
   }
 
+  if (showSetup) {
+    const initialBuckets =
+      buckets.length > 0
+        ? buckets.map((b) => ({ name: b.name, description: b.description }))
+        : undefined;
+    return (
+      <GroupEmailsSetup
+        initialBuckets={initialBuckets}
+        onConfirm={async (draftBuckets) => {
+          await onGroupEmails(draftBuckets);
+          setShowSetup(false);
+        }}
+        onCancel={() => setShowSetup(false)}
+      />
+    );
+  }
+
   if (buckets.length === 0) {
     return (
       <div className="px-8 py-20 text-center">
@@ -82,16 +104,50 @@ export default function InboxView({ bucketsHook }: Props) {
             />
           </svg>
         </div>
-        <p className="text-muted-foreground text-sm font-medium">No buckets yet</p>
-        <p className="text-muted-foreground text-xs mt-1">
-          Ask the agent to set up email categories.
-        </p>
+        <p className="text-muted-foreground text-sm font-medium mb-4">No emails grouped yet</p>
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 text-sm font-medium transition-colors"
+          onClick={() => setShowSetup(true)}
+        >
+          Group emails
+        </button>
       </div>
     );
   }
 
   return (
     <div className="py-4">
+      <div className="px-8 mb-4 flex items-center justify-end">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-[12px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          onClick={() => setShowSetup(true)}
+          disabled={isGrouping}
+        >
+          <svg
+            aria-hidden="true"
+            className="w-3.5 h-3.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
+            />
+          </svg>
+          Group emails
+        </button>
+      </div>
+      {isGrouping && (
+        <div className="mx-8 mb-4 flex items-center gap-2 rounded-lg bg-primary/5 border border-primary/10 px-4 py-2.5 text-sm text-primary">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+          Classifying your inbox...
+        </div>
+      )}
       {buckets.map((bucket, bucketIdx) => {
         const isExpanded = expandedBuckets.has(bucket.id);
         const visibleThreads = isExpanded

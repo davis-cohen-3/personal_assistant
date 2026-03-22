@@ -14,6 +14,9 @@ interface Props {
   onAgentDone: (toolNames: string[]) => void;
   onTitleUpdate: () => void;
   conversationsHook: ReturnType<typeof useConversations>;
+  disabled?: boolean;
+  queuedMessage?: string | null;
+  onQueuedMessageSent?: () => void;
 }
 
 const BACKOFF_BASE_MS = 1000;
@@ -37,6 +40,9 @@ export default function ChatPanel({
   onAgentDone,
   onTitleUpdate,
   conversationsHook,
+  disabled,
+  queuedMessage,
+  onQueuedMessageSent,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -52,6 +58,9 @@ export default function ChatPanel({
   const activeConversationIdRef = useRef<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [socketReady, setSocketReady] = useState(false);
+  const onQueuedMessageSentRef = useRef(onQueuedMessageSent);
+  onQueuedMessageSentRef.current = onQueuedMessageSent;
 
   const { conversations, createConversation, deleteConversation } = conversationsHook;
 
@@ -161,11 +170,13 @@ export default function ChatPanel({
     socket.onopen = () => {
       setConnectionLost(false);
       backoffRef.current = BACKOFF_BASE_MS;
+      setSocketReady(true);
     };
 
     socket.onclose = (event: CloseEvent) => {
       if (wsRef.current === socket) {
         wsRef.current = null;
+        setSocketReady(false);
       }
 
       if (closingIntentionallyRef.current) {
@@ -206,6 +217,7 @@ export default function ChatPanel({
     openSocket(conversationId);
 
     return () => {
+      setSocketReady(false);
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -235,6 +247,14 @@ export default function ChatPanel({
     },
     [loading],
   );
+
+  // Auto-send queued message when socket is ready
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref callback excluded intentionally
+  useEffect(() => {
+    if (!queuedMessage || !socketReady || loading) return;
+    send(queuedMessage);
+    onQueuedMessageSentRef.current?.();
+  }, [queuedMessage, socketReady, loading, send]);
 
   const handleReconnect = useCallback(() => {
     if (!conversationId) return;
@@ -272,7 +292,7 @@ export default function ChatPanel({
     <div className="w-[380px] border-l border-border flex flex-col h-full shrink-0 bg-card">
       {/* Header with conversation dropdown */}
       <div className="px-3 py-2.5 border-b border-border flex items-center gap-2" ref={dropdownRef}>
-        <div className="flex-1 relative">
+        <div className="flex-1 min-w-0 relative">
           <button
             type="button"
             className="w-full flex items-center justify-between gap-2 rounded-lg border border-border bg-background text-foreground px-3 py-1.5 text-[13px] hover:bg-muted/50 transition-colors"
@@ -292,7 +312,7 @@ export default function ChatPanel({
           </button>
 
           {dropdownOpen && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto py-1">
+            <div className="absolute top-full left-0 right-0 mt-1 bg-popover text-popover-foreground border border-border rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto overflow-x-hidden py-1">
               {conversations.map((conv) => (
                 <button
                   type="button"
@@ -534,18 +554,33 @@ export default function ChatPanel({
               if (!loading && input.trim()) send(input.trim());
             }}
           >
-            <div className="flex gap-2">
-              <input
-                className="flex-1 rounded-lg border border-border bg-background text-foreground px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 placeholder:text-muted-foreground"
+            <div className="flex gap-2 items-end">
+              <textarea
+                className="flex-1 rounded-lg border border-border bg-background text-foreground px-3 py-2 text-[13px] focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 placeholder:text-muted-foreground resize-none overflow-hidden"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Type a message..."
-                disabled={loading}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!loading && input.trim()) send(input.trim());
+                  }
+                }}
+                placeholder={disabled ? "Chat paused..." : "Type a message..."}
+                disabled={loading || disabled}
+                rows={1}
+                style={{
+                  maxHeight: "150px",
+                  overflowY: input.split("\n").length > 5 ? "auto" : "hidden",
+                }}
               />
               <Button
                 type="submit"
                 size="sm"
-                disabled={loading || !input.trim()}
+                disabled={loading || disabled || !input.trim()}
                 className="rounded-lg px-4"
               >
                 <svg

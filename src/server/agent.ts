@@ -1,6 +1,3 @@
-import type { Dirent } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Context } from "hono";
@@ -47,14 +44,14 @@ When compacting conversation history, always preserve:
 - Names and context of participants discussed in recent messages
 - Active bucket assignments mentioned recently`;
 
-export let SYSTEM_PROMPT = BASE_SYSTEM_PROMPT;
+const SYSTEM_PROMPT = BASE_SYSTEM_PROMPT;
 
 const AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
   "email-classifier": {
     description:
       "Classifies email threads into buckets. Use for inbox triage and bulk classification.",
     prompt:
-      "You are an email classification assistant. Sync the inbox, read bucket definitions, then classify all unbucketed threads in batches of 25...",
+      "You are an email classification assistant. Sync the inbox, read bucket definitions, then classify ALL unbucketed threads in batches of 25. After each batch, check how many remain and keep going until zero unbucketed threads remain. Do not stop early.",
     tools: ["mcp__assistant-tools__sync_email", "mcp__assistant-tools__buckets"],
     model: "haiku",
   },
@@ -97,44 +94,9 @@ const BASE_OPTIONS = {
   persistSession: true,
   settingSources: [] as ("user" | "project" | "local")[],
   includePartialMessages: true,
+  maxTurns: 30,
+  maxBudgetUsd: 5.0,
 };
-
-async function loadSkillsAddition(skillsDir: string): Promise<string> {
-  let addition = "";
-  let entries: Dirent[];
-  try {
-    entries = await readdir(skillsDir, { withFileTypes: true });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return "";
-    }
-    throw err;
-  }
-
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith(".md")) {
-      const content = await readFile(join(skillsDir, entry.name), "utf8");
-      addition += `\n\n${content}`;
-    } else if (entry.isDirectory()) {
-      const subPath = join(skillsDir, entry.name);
-      const subEntries = await readdir(subPath, { withFileTypes: true });
-      for (const subEntry of subEntries) {
-        if (subEntry.isFile() && subEntry.name.endsWith(".md")) {
-          const content = await readFile(join(subPath, subEntry.name), "utf8");
-          addition += `\n\n${content}`;
-        }
-      }
-    }
-  }
-
-  return addition;
-}
-
-export async function initAgent(): Promise<void> {
-  const skillsDir = join(process.cwd(), ".claude", "skills");
-  const addition = await loadSkillsAddition(skillsDir);
-  SYSTEM_PROMPT = BASE_SYSTEM_PROMPT + addition;
-}
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
   "mcp__assistant-tools__sync_email": "Reading emails",
@@ -159,6 +121,7 @@ export async function streamQuery(
   conversationId: string,
   prompt: string,
   sessionId?: string,
+  abortController?: AbortController,
 ): Promise<void> {
   const mcpServer = createCustomMcpServer();
   let capturedSessionId: string | undefined;
@@ -172,6 +135,7 @@ export async function streamQuery(
       ...BASE_OPTIONS,
       systemPrompt: SYSTEM_PROMPT,
       mcpServers: { "assistant-tools": mcpServer },
+      ...(abortController ? { abortController } : {}),
       ...(withResume && sessionId !== undefined ? { resume: sessionId } : {}),
     };
 
@@ -236,14 +200,21 @@ export async function streamQuery(
           conversationId,
           subtype: msg.subtype,
           numTurns: msg.num_turns,
+          costUsd: msg.total_cost_usd,
           errors: msg.errors,
         });
-        ws.send(
-          JSON.stringify({
-            type: "error",
-            message: "Agent encountered an error — check server logs",
-          }),
-        );
+        let userMessage: string;
+        switch (msg.subtype) {
+          case "error_max_turns":
+            userMessage = "Agent reached its turn limit. Try a more specific request.";
+            break;
+          case "error_max_budget_usd":
+            userMessage = "Agent reached its cost limit for this query.";
+            break;
+          default:
+            userMessage = "Agent encountered an error — check server logs";
+        }
+        ws.send(JSON.stringify({ type: "error", message: userMessage }));
         return;
       }
     }
@@ -276,6 +247,7 @@ export async function streamQuery(
 export function handleWebSocket(c: Context): WSEvents {
   const conversationId = new URL(c.req.url).searchParams.get("conversationId");
   let processing = false;
+  let activeAbort: AbortController | undefined;
 
   return {
     onOpen: (_evt, ws) => {
@@ -327,11 +299,13 @@ export function handleWebSocket(c: Context): WSEvents {
 
         const sessionId =
           conversation.sdk_session_id !== null ? conversation.sdk_session_id : undefined;
-        await streamQuery(ws, conversationId, msg.content, sessionId);
+        activeAbort = new AbortController();
+        await streamQuery(ws, conversationId, msg.content, sessionId, activeAbort);
       } catch (err) {
         console.error("Agent error", { conversationId, error: err });
         ws.send(JSON.stringify({ type: "error", message: "Agent error — check server logs" }));
       } finally {
+        activeAbort = undefined;
         processing = false;
       }
     },
@@ -342,6 +316,11 @@ export function handleWebSocket(c: Context): WSEvents {
         code: (evt as CloseEvent).code,
         reason: (evt as CloseEvent).reason,
       });
+      if (activeAbort) {
+        console.info("Aborting active agent query", { conversationId });
+        activeAbort.abort();
+        activeAbort = undefined;
+      }
     },
   };
 }

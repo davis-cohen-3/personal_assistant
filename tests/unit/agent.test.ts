@@ -20,11 +20,6 @@ const { mockCreateCustomMcpServer } = vi.hoisted(() => ({
   mockCreateCustomMcpServer: vi.fn(),
 }));
 
-const { mockReaddir, mockReadFile } = vi.hoisted(() => ({
-  mockReaddir: vi.fn(),
-  mockReadFile: vi.fn(),
-}));
-
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: mockQuery,
 }));
@@ -40,16 +35,10 @@ vi.mock("../../src/server/tools.js", () => ({
   createCustomMcpServer: mockCreateCustomMcpServer,
 }));
 
-vi.mock("node:fs/promises", () => ({
-  readdir: mockReaddir,
-  readFile: mockReadFile,
-}));
-
 import type { Context } from "hono";
 import type { WSContext } from "hono/ws";
 import {
   handleWebSocket,
-  initAgent,
   streamQuery,
 } from "../../src/server/agent.js";
 
@@ -236,6 +225,108 @@ describe("streamQuery", () => {
       "hard error"
     );
     expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends error on non-success result and does not persist message", async () => {
+    const ws = makeMockWs();
+    mockCreateCustomMcpServer.mockReturnValue({});
+    mockQuery.mockReturnValue(
+      makeGen([
+        {
+          type: "result",
+          subtype: "error",
+          result: "",
+          session_id: "sess-1",
+          num_turns: 1,
+          errors: ["something went wrong"],
+        },
+      ])
+    );
+
+    await streamQuery(ws, "conv-1", "prompt");
+
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "error", message: "Agent encountered an error — check server logs" })
+    );
+    expect(mockCreateChatMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends tool_status when content_block_start has tool_use", async () => {
+    const ws = makeMockWs();
+    mockCreateCustomMcpServer.mockReturnValue({});
+    mockCreateChatMessage.mockResolvedValue({});
+    mockUpdateConversation.mockResolvedValue({});
+    mockQuery.mockReturnValue(
+      makeGen([
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_start",
+            content_block: { type: "tool_use", name: "mcp__assistant-tools__sync_email" },
+          },
+          session_id: "sess-1",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          result: "done",
+          session_id: "sess-1",
+        },
+      ])
+    );
+
+    await streamQuery(ws, "conv-1", "prompt");
+
+    expect(ws.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: "tool_status",
+        toolName: "mcp__assistant-tools__sync_email",
+        displayName: "Reading emails",
+      })
+    );
+  });
+
+  it("suppresses text_delta after tool use is detected", async () => {
+    const ws = makeMockWs();
+    mockCreateCustomMcpServer.mockReturnValue({});
+    mockCreateChatMessage.mockResolvedValue({});
+    mockUpdateConversation.mockResolvedValue({});
+    mockQuery.mockReturnValue(
+      makeGen([
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_start",
+            content_block: { type: "tool_use", name: "mcp__assistant-tools__calendar" },
+          },
+          session_id: "sess-1",
+        },
+        {
+          type: "stream_event",
+          event: {
+            type: "content_block_delta",
+            delta: { type: "text_delta", text: "should be suppressed" },
+          },
+          session_id: "sess-1",
+        },
+        {
+          type: "result",
+          subtype: "success",
+          result: "final text",
+          session_id: "sess-1",
+        },
+      ])
+    );
+
+    await streamQuery(ws, "conv-1", "prompt");
+
+    const textDeltaCalls = (ws.send as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([arg]: [string]) => {
+        const parsed = JSON.parse(arg) as { type: string };
+        return parsed.type === "text_delta";
+      }
+    );
+    expect(textDeltaCalls).toHaveLength(0);
   });
 
   it("skips non-text-delta stream events", async () => {
@@ -501,34 +592,3 @@ describe("handleWebSocket", () => {
   });
 });
 
-describe("initAgent", () => {
-  beforeEach(() => vi.resetAllMocks());
-
-  it("handles missing skills directory gracefully (ENOENT)", async () => {
-    const enoentError = Object.assign(new Error("ENOENT: no such file"), {
-      code: "ENOENT",
-    });
-    mockReaddir.mockRejectedValue(enoentError);
-
-    await expect(initAgent()).resolves.toBeUndefined();
-  });
-
-  it("throws on non-ENOENT filesystem errors", async () => {
-    const permError = Object.assign(new Error("EACCES: permission denied"), {
-      code: "EACCES",
-    });
-    mockReaddir.mockRejectedValue(permError);
-
-    await expect(initAgent()).rejects.toThrow("EACCES");
-  });
-
-  it("appends skill content to SYSTEM_PROMPT when directory exists", async () => {
-    mockReaddir.mockResolvedValue([
-      { isFile: () => true, isDirectory: () => false, name: "skill.md" },
-    ]);
-    mockReadFile.mockResolvedValue("# Skill Content");
-
-    await expect(initAgent()).resolves.toBeUndefined();
-    expect(mockReadFile).toHaveBeenCalled();
-  });
-});
