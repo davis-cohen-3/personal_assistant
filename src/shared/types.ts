@@ -4,6 +4,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   streaming?: boolean;
+  tools?: string[];
 }
 
 // WebSocket messages: frontend → backend
@@ -34,7 +35,18 @@ export interface WsConversationUpdated {
   title: string;
 }
 
-export type WsServerMessage = WsTextDelta | WsTextDone | WsError | WsConversationUpdated;
+export interface WsToolStatus {
+  type: "tool_status";
+  toolName: string;
+  displayName: string;
+}
+
+export type WsServerMessage =
+  | WsTextDelta
+  | WsTextDone
+  | WsError
+  | WsConversationUpdated
+  | WsToolStatus;
 
 // Database record types
 export interface Conversation {

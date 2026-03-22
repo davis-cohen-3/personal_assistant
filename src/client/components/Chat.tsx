@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { fetchApi } from "@/lib/fetchApi";
@@ -18,6 +20,8 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [connectionLost, setConnectionLost] = useState(false);
+  const [toolsUsed, setToolsUsed] = useState<{ id: string; name: string }[]>([]);
+  const toolIdRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(BACKOFF_BASE_MS);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -65,7 +69,12 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
     socket.onmessage = (event: MessageEvent<string>) => {
       const data = JSON.parse(event.data) as WsServerMessage;
 
-      if (data.type === "text_delta") {
+      if (data.type === "tool_status") {
+        const id = `tool-${++toolIdRef.current}`;
+        setToolsUsed((prev) => [...prev, { id, name: data.displayName }]);
+        // Clear any streaming text — it's intermediate (pre-tool)
+        setMessages((prev) => prev.filter((m) => !m.streaming));
+      } else if (data.type === "text_delta") {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant" && last.streaming) {
@@ -77,12 +86,21 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
           ];
         });
       } else if (data.type === "text_done") {
-        setMessages((prev) => {
-          const withoutStreaming = prev.filter((m) => !m.streaming);
-          return [
-            ...withoutStreaming,
-            { id: crypto.randomUUID(), role: "assistant", text: data.content },
-          ];
+        setToolsUsed((prevTools) => {
+          const toolNames = prevTools.map((t) => t.name);
+          setMessages((prev) => {
+            const withoutStreaming = prev.filter((m) => !m.streaming);
+            return [
+              ...withoutStreaming,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant" as const,
+                text: data.content,
+                tools: toolNames.length > 0 ? toolNames : undefined,
+              },
+            ];
+          });
+          return [];
         });
         setLoading(false);
         onAgentDoneRef.current();
@@ -92,6 +110,7 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
           { id: crypto.randomUUID(), role: "system", text: data.message },
         ]);
         setLoading(false);
+        setToolsUsed([]);
       } else if (data.type === "conversation_updated") {
         onTitleUpdateRef.current();
       }
@@ -178,6 +197,7 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: content }]);
       setInput("");
       setLoading(true);
+      setToolsUsed([]);
     },
     [loading],
   );
@@ -227,24 +247,128 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
             <Button onClick={() => send("Start my day")}>Start Day</Button>
           </div>
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`message flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
+          <>
+            {messages.map((msg) => (
               <div
-                className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : msg.role === "system"
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-muted"
-                } ${msg.streaming ? "opacity-80" : ""}`}
+                key={msg.id}
+                className={`message flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
-                {msg.text}
+                <div
+                  className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : msg.role === "system"
+                        ? "bg-destructive/10 text-destructive"
+                        : "bg-muted"
+                  } ${msg.streaming ? "opacity-80" : ""}`}
+                >
+                  {msg.tools && msg.tools.length > 0 && (
+                    <details className="mb-2 text-xs text-muted-foreground">
+                      <summary className="cursor-pointer hover:text-foreground">
+                        Thinking ({msg.tools.length} {msg.tools.length === 1 ? "tool" : "tools"})
+                      </summary>
+                      <ul className="mt-1 ml-4 space-y-0.5">
+                        {msg.tools.map((tool) => (
+                          <li key={tool}>{tool}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                  {msg.role === "assistant" ? (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => (
+                          <h1 className="text-lg font-bold mt-3 mb-1">{children}</h1>
+                        ),
+                        h2: ({ children }) => (
+                          <h2 className="text-base font-bold mt-3 mb-1">{children}</h2>
+                        ),
+                        h3: ({ children }) => (
+                          <h3 className="text-sm font-bold mt-2 mb-1">{children}</h3>
+                        ),
+                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc ml-4 mb-2">{children}</ul>,
+                        ol: ({ children }) => (
+                          <ol className="list-decimal ml-4 mb-2">{children}</ol>
+                        ),
+                        li: ({ children }) => <li className="mb-0.5">{children}</li>,
+                        strong: ({ children }) => (
+                          <strong className="font-semibold">{children}</strong>
+                        ),
+                        code: ({ children, className }) =>
+                          className ? (
+                            <pre className="bg-background/50 rounded p-2 my-2 overflow-x-auto text-xs">
+                              <code>{children}</code>
+                            </pre>
+                          ) : (
+                            <code className="bg-background/50 rounded px-1 py-0.5 text-xs">
+                              {children}
+                            </code>
+                          ),
+                        table: ({ children }) => (
+                          <table className="border-collapse my-2 text-xs w-full">{children}</table>
+                        ),
+                        th: ({ children }) => (
+                          <th className="border border-border px-2 py-1 text-left font-semibold bg-background/50">
+                            {children}
+                          </th>
+                        ),
+                        td: ({ children }) => (
+                          <td className="border border-border px-2 py-1">{children}</td>
+                        ),
+                        hr: () => <hr className="my-3 border-border" />,
+                        a: ({ children, href }) => (
+                          <a
+                            href={href}
+                            className="underline text-primary"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {children}
+                          </a>
+                        ),
+                      }}
+                    >
+                      {msg.text}
+                    </ReactMarkdown>
+                  ) : (
+                    msg.text
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            ))}
+            {loading && toolsUsed.length > 0 && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-lg px-4 py-3 text-sm bg-muted opacity-80">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="inline-block w-2 h-2 rounded-full bg-current animate-pulse" />
+                    <span>Thinking...</span>
+                  </div>
+                  <ul className="mt-2 text-xs text-muted-foreground space-y-1 ml-4">
+                    {toolsUsed.map((tool, idx) => (
+                      <li
+                        key={tool.id}
+                        className={idx === toolsUsed.length - 1 ? "animate-pulse" : ""}
+                      >
+                        {idx === toolsUsed.length - 1 ? "●" : "✓"} {tool.name}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+            {loading && toolsUsed.length === 0 && messages.length > 0 && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-lg px-4 py-3 text-sm bg-muted opacity-80">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="inline-block w-2 h-2 rounded-full bg-current animate-pulse" />
+                    <span>Thinking...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

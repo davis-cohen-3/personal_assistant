@@ -136,6 +136,19 @@ export async function initAgent(): Promise<void> {
   SYSTEM_PROMPT = BASE_SYSTEM_PROMPT + addition;
 }
 
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  "mcp__assistant-tools__sync_email": "Reading emails",
+  "mcp__assistant-tools__action_email": "Managing email",
+  "mcp__assistant-tools__calendar": "Checking calendar",
+  "mcp__assistant-tools__drive": "Searching drive",
+  "mcp__assistant-tools__buckets": "Managing buckets",
+  Agent: "Delegating to assistant",
+};
+
+function toolDisplayName(rawName: string): string {
+  return TOOL_DISPLAY_NAMES[rawName] ?? rawName;
+}
+
 const IncomingMessage = z.object({
   type: z.literal("chat"),
   content: z.string().min(1),
@@ -169,21 +182,38 @@ export async function streamQuery(
     });
 
     const gen = query({ prompt, options });
+    let hasToolUse = false;
     for await (const msg of gen) {
       if (!capturedSessionId && msg.session_id) {
         capturedSessionId = msg.session_id;
       }
 
+      // Detect tool_use blocks and forward tool name to client
+      if (msg.type === "stream_event" && msg.event.type === "content_block_start") {
+        const block = (msg.event as Record<string, unknown>).content_block as
+          | { type: string; name?: string }
+          | undefined;
+        if (block?.type === "tool_use" && block.name) {
+          hasToolUse = true;
+          const displayName = toolDisplayName(block.name);
+          console.info("Agent tool use", { conversationId, toolName: block.name, displayName });
+          ws.send(JSON.stringify({ type: "tool_status", toolName: block.name, displayName }));
+        }
+      }
+
+      // Only forward text_delta if no tools have been called (simple response).
+      // For multi-turn tool queries, text_done sends the authoritative final text.
       if (
         msg.type === "stream_event" &&
         msg.event.type === "content_block_delta" &&
-        msg.event.delta.type === "text_delta"
+        msg.event.delta.type === "text_delta" &&
+        !hasToolUse
       ) {
         ws.send(JSON.stringify({ type: "text_delta", content: msg.event.delta.text }));
       }
 
       if (msg.type === "tool_progress") {
-        console.info("Agent tool call", {
+        console.info("Agent tool progress", {
           conversationId,
           toolName: msg.tool_name,
           elapsedSeconds: msg.elapsed_time_seconds,
