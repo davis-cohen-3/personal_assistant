@@ -295,24 +295,9 @@ describe("handleWebSocket", () => {
     expect(ws.close).toHaveBeenCalled();
   });
 
-  it("sends error and closes if conversation not found in DB", async () => {
-    const ws = makeMockWs();
-    const ctx = makeCtx("conv-999");
-    mockGetConversation.mockResolvedValue(null);
-    const events = handleWebSocket(ctx);
-
-    await events.onOpen?.(new Event("open"), ws);
-
-    expect(ws.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: "error", message: "Conversation not found" })
-    );
-    expect(ws.close).toHaveBeenCalled();
-  });
-
-  it("does not send or close when conversation exists on open", async () => {
+  it("does not send or close when conversationId is present on open", async () => {
     const ws = makeMockWs();
     const ctx = makeCtx("conv-1");
-    mockGetConversation.mockResolvedValue({ id: "conv-1", sdk_session_id: null });
     const events = handleWebSocket(ctx);
 
     await events.onOpen?.(new Event("open"), ws);

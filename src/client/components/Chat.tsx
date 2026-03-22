@@ -22,8 +22,7 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
   const backoffRef = useRef(BACKOFF_BASE_MS);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closingIntentionallyRef = useRef(false);
-  const cleanCloseCountRef = useRef(0);
-  const MAX_CLEAN_RECONNECTS = 3;
+  const activeConversationIdRef = useRef<string | null>(null);
 
   // Load message history when conversationId changes
   useEffect(() => {
@@ -97,29 +96,47 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
       socket.onopen = () => {
         setConnectionLost(false);
         backoffRef.current = BACKOFF_BASE_MS;
-        cleanCloseCountRef.current = 0;
       };
 
       socket.onclose = (event: CloseEvent) => {
-        wsRef.current = null;
-        setLoading(false);
+        // Only null out the ref if it still points to THIS socket.
+        // When switching conversations, socket B may already be assigned
+        // before socket A's onclose fires (async). Without this check,
+        // socket A's onclose would clobber socket B's reference.
+        if (wsRef.current === socket) {
+          wsRef.current = null;
+        }
+
+        // Intentional close (conversation switch / unmount) — don't reconnect
         if (closingIntentionallyRef.current) {
           closingIntentionallyRef.current = false;
           return;
         }
-        if (event.wasClean && cleanCloseCountRef.current < MAX_CLEAN_RECONNECTS) {
-          // Clean close (e.g. after agent response) — reconnect immediately
-          cleanCloseCountRef.current++;
-          openSocket(convId);
-        } else if (!event.wasClean || cleanCloseCountRef.current >= MAX_CLEAN_RECONNECTS) {
-          // Unclean close (server down) — backoff and show banner
-          setConnectionLost(true);
-          const delay = Math.min(backoffRef.current, BACKOFF_MAX_MS);
-          backoffRef.current = Math.min(backoffRef.current * 2, BACKOFF_MAX_MS);
-          reconnectTimerRef.current = setTimeout(() => {
-            openSocket(convId);
-          }, delay);
+
+        // Stale close — user already switched to a different conversation
+        if (convId !== activeConversationIdRef.current) {
+          return;
         }
+
+        // Normal close (code 1000) — server intentionally closed, no reconnect
+        if (event.code === 1000) {
+          return;
+        }
+
+        // Unexpected close — reconnect with backoff
+        console.warn("WebSocket closed unexpectedly", {
+          code: event.code,
+          wasClean: event.wasClean,
+          convId,
+        });
+        setConnectionLost(true);
+        const delay = Math.min(backoffRef.current, BACKOFF_MAX_MS);
+        backoffRef.current = Math.min(backoffRef.current * 2, BACKOFF_MAX_MS);
+        reconnectTimerRef.current = setTimeout(() => {
+          if (convId === activeConversationIdRef.current) {
+            openSocket(convId);
+          }
+        }, delay);
       };
     },
     [onAgentDone, onTitleUpdate],
@@ -127,6 +144,7 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
 
   // Manage WebSocket — one per conversation
   useEffect(() => {
+    activeConversationIdRef.current = conversationId;
     if (!conversationId) return;
 
     backoffRef.current = BACKOFF_BASE_MS;
@@ -145,7 +163,15 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
 
   const send = useCallback(
     (content: string) => {
-      if (!wsRef.current || loading) return;
+      if (loading) return;
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        console.warn("WebSocket not open, cannot send", {
+          readyState: wsRef.current?.readyState,
+          convId: activeConversationIdRef.current,
+        });
+        setConnectionLost(true);
+        return;
+      }
       wsRef.current.send(JSON.stringify({ type: "chat", content }));
       setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: content }]);
       setInput("");
@@ -160,9 +186,11 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
     }
+    closingIntentionallyRef.current = true;
     wsRef.current?.close();
     wsRef.current = null;
     backoffRef.current = BACKOFF_BASE_MS;
+    setLoading(false);
     openSocket(conversationId);
   }, [conversationId, openSocket]);
 

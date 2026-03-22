@@ -1,3 +1,4 @@
+import type { Server } from "node:http";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -94,7 +95,7 @@ app.get("*", serveStatic({ path: "./dist/client/index.html" }));
 
 const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
   console.info(`Server listening on http://localhost:${info.port}`);
-});
+}) as Server;
 
 injectWebSocket(server);
 

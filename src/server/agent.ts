@@ -241,10 +241,12 @@ export async function streamQuery(
     await createChatMessage(conversationId, "assistant", fullText);
   }
   ws.send(JSON.stringify({ type: "text_done", content: fullText }));
+  console.info("text_done sent, socket remains open", { conversationId });
 }
 
 export function handleWebSocket(c: Context): WSEvents {
   const conversationId = new URL(c.req.url).searchParams.get("conversationId");
+  let processing = false;
 
   return {
     onOpen: (_evt, ws) => {
@@ -268,8 +270,15 @@ export function handleWebSocket(c: Context): WSEvents {
         return;
       }
 
+      if (processing) {
+        console.warn("Message rejected — agent still processing", { conversationId });
+        ws.send(JSON.stringify({ type: "error", message: "Agent is still working" }));
+        return;
+      }
+
       console.info("WS message received", { conversationId, content: msg.content.slice(0, 80) });
 
+      processing = true;
       try {
         const conversation = await getConversation(conversationId);
         if (!conversation) {
@@ -293,6 +302,8 @@ export function handleWebSocket(c: Context): WSEvents {
       } catch (err) {
         console.error("Agent error", { conversationId, error: err });
         ws.send(JSON.stringify({ type: "error", message: "Agent error — check server logs" }));
+      } finally {
+        processing = false;
       }
     },
 
