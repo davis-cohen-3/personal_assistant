@@ -1,7 +1,11 @@
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { createNodeWebSocket } from "@hono/node-server/ws";
+import type { MiddlewareHandler } from "hono";
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { ZodError } from "zod";
+import { handleWebSocket, initAgent } from "./agent.js";
 import { authMiddleware, googleAuthRoutes } from "./auth.js";
 import { AppError } from "./exceptions.js";
 import { loadTokens } from "./google/index.js";
@@ -24,6 +28,8 @@ for (const key of REQUIRED_ENV) {
 
 const app = new Hono();
 
+const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+
 app.onError((err, c) => {
   if (err instanceof ZodError) {
     console.error("Validation failed", { issues: err.issues });
@@ -40,6 +46,18 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500);
 });
 
+// CSP headers for all responses
+app.use("*", async (c, next) => {
+  await next();
+  c.header(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:",
+  );
+});
+
+// Serve static assets (no auth required)
+app.use("/assets/*", serveStatic({ root: "./dist/client" }));
+
 app.get("/health", (c) => {
   return c.json({ status: "ok" });
 });
@@ -47,17 +65,46 @@ app.get("/health", (c) => {
 // Public auth routes
 app.route("/auth", googleAuthRoutes);
 
-// Protected routes — require valid session
+// Origin validation for WebSocket (CLARITY-014)
+const originGuard: MiddlewareHandler = async (c, next) => {
+  const origin = c.req.header("Origin");
+  const host = c.req.header("Host");
+  if (!origin || !host) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  const originHostname = new URL(origin).hostname;
+  const serverHostname = host.split(":")[0];
+  if (originHostname !== serverHostname) {
+    return c.json({ error: "Forbidden" }, 403);
+  }
+  await next();
+};
+
+// WebSocket route: origin check → auth → upgrade
+app.use("/ws", originGuard);
+app.use("/ws", authMiddleware);
+app.get("/ws", upgradeWebSocket(handleWebSocket));
+
+// Protected API routes
 app.use("/api/*", authMiddleware);
 app.route("/api", apiRoutes);
+
+// SPA catch-all — must be last
+app.get("*", serveStatic({ path: "./dist/client/index.html" }));
 
 const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
   console.error(`Server listening on http://localhost:${info.port}`);
 });
 
-// Load persisted Google tokens on startup
+injectWebSocket(server);
+
+// Load persisted Google tokens and agent skills on startup
 loadTokens().catch((err) => {
   console.error("Failed to load Google tokens at startup", { error: err });
+});
+
+initAgent().catch((err) => {
+  console.error("Failed to init agent skills at startup", { error: err });
 });
 
 function shutdown() {

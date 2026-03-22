@@ -103,4 +103,4 @@ const v = config.get('key') ?? 'default'; // ❌ Fallback defaults
 
 ## Current Work
 
-Check `specs/` for active work. Read `specs/{issue}/sessions/` for context.
+Check `implementation_phases/` for active work. Read `implementation_phases/{phase#}` for context.
