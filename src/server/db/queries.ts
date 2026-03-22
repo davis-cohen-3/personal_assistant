@@ -221,7 +221,21 @@ export async function unassignThread(gmailThreadId: string) {
 
 export async function listBucketsWithThreads() {
   const allBuckets = await db.select().from(buckets).orderBy(buckets.sort_order);
-  const allThreadBuckets = await db.select().from(threadBuckets);
+  const allThreadBuckets = await db
+    .select({
+      id: threadBuckets.id,
+      gmail_thread_id: threadBuckets.gmail_thread_id,
+      bucket_id: threadBuckets.bucket_id,
+      subject: threadBuckets.subject,
+      snippet: threadBuckets.snippet,
+      assigned_at: threadBuckets.assigned_at,
+      from_name: emailThreads.from_name,
+      from_email: emailThreads.from_email,
+      last_message_at: emailThreads.last_message_at,
+    })
+    .from(threadBuckets)
+    .leftJoin(emailThreads, eq(threadBuckets.gmail_thread_id, emailThreads.gmail_thread_id))
+    .orderBy(desc(emailThreads.last_message_at));
   return allBuckets.map((bucket) => ({
     ...bucket,
     threads: allThreadBuckets.filter((tb) => tb.bucket_id === bucket.id),

@@ -37,7 +37,6 @@ export default function ThreadDetail({ threadId, onClose, onTrash }: Props) {
         const r = await fetchApi(`/api/gmail/threads/${threadId}`);
         const data: Thread = await r.json();
         setThread(data);
-        // Scroll to bottom after React renders the new messages
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 0);
         if (markRead) {
           const latest = data.messages[data.messages.length - 1];
@@ -93,56 +92,62 @@ export default function ThreadDetail({ threadId, onClose, onTrash }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-background rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="font-semibold truncate">{thread?.subject ?? "Loading…"}</h2>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleTrash}>
-              Trash
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onClose}>
-              ✕
+    <div className="px-6 py-4">
+      {loading ? (
+        <div className="flex justify-center py-6">
+          <Spinner />
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold truncate pr-4 text-foreground">
+              {thread?.subject ?? "Loading\u2026"}
+            </h4>
+            <div className="flex gap-1.5 shrink-0">
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleTrash}>
+                Trash
+              </Button>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onClose}>
+                Close
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {thread?.messages.map((msg) => (
+              <div key={msg.gmail_message_id} className="space-y-1">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground/70">{msg.from}</span>
+                  <span>{new Date(msg.date).toLocaleString()}</span>
+                </div>
+                <pre className="text-xs whitespace-pre-wrap font-sans text-foreground/90 leading-relaxed">
+                  {msg.body_text}
+                </pre>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="mt-3 space-y-2 border-t border-border pt-3">
+            {replySent && <div className="text-xs text-emerald-400 font-medium">Reply sent</div>}
+            <textarea
+              className="w-full rounded-md border border-border bg-background text-foreground px-3 py-2 text-xs resize-none focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
+              rows={2}
+              value={replyBody}
+              onChange={(e) => setReplyBody(e.target.value)}
+              placeholder="Write a reply\u2026"
+            />
+            <Button
+              onClick={handleReply}
+              disabled={sending || !replyBody.trim()}
+              size="sm"
+              className="h-7 text-xs"
+            >
+              {sending ? "Sending\u2026" : "Reply"}
             </Button>
           </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {loading ? (
-            <div className="flex justify-center py-8">
-              <Spinner />
-            </div>
-          ) : (
-            <>
-              {thread?.messages.map((msg) => (
-                <div key={msg.gmail_message_id} className="space-y-1">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>{msg.from}</span>
-                    <span>{new Date(msg.date).toLocaleString()}</span>
-                  </div>
-                  {/* Plain text only — never dangerouslySetInnerHTML for email content */}
-                  <pre className="text-sm whitespace-pre-wrap font-sans">{msg.body_text}</pre>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </>
-          )}
-        </div>
-
-        <div className="p-4 border-t space-y-2">
-          {replySent && <div className="text-sm text-green-600 font-medium">Reply sent</div>}
-          <textarea
-            className="w-full rounded-md border px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-            rows={3}
-            value={replyBody}
-            onChange={(e) => setReplyBody(e.target.value)}
-            placeholder="Write a reply…"
-          />
-          <Button onClick={handleReply} disabled={sending || !replyBody.trim()} size="sm">
-            {sending ? "Sending…" : "Reply"}
-          </Button>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
