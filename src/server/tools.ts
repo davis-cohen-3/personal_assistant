@@ -163,17 +163,17 @@ export const handlers = {
         if (!params.to) return err("to is required for send action");
         if (!params.subject) return err("subject is required for send action");
         if (!params.body) return err("body is required for send action");
-        const result = await email.sendMessage(params.to, params.subject, params.body, {
+        await email.sendMessage(params.to, params.subject, params.body, {
           cc: params.cc,
         });
-        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "reply": {
         if (!params.thread_id) return err("thread_id is required for reply action");
         if (!params.message_id) return err("message_id is required for reply action");
         if (!params.body) return err("body is required for reply action");
-        const result = await email.replyToThread(params.thread_id, params.message_id, params.body);
-        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+        await email.replyToThread(params.thread_id, params.message_id, params.body);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "draft": {
         if (!params.to) return err("to is required for draft action");

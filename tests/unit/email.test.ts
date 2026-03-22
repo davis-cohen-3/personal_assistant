@@ -24,12 +24,14 @@ const {
   mockUpsertEmailMessages,
   mockGetEmailThread,
   mockGetUnbucketedThreads,
+  mockUnassignThread,
 } = vi.hoisted(() => ({
   mockListEmailThreadsByGmailIds: vi.fn(),
   mockUpsertEmailThread: vi.fn(),
   mockUpsertEmailMessages: vi.fn(),
   mockGetEmailThread: vi.fn(),
   mockGetUnbucketedThreads: vi.fn(),
+  mockUnassignThread: vi.fn(),
 }));
 
 vi.mock("../../src/server/google/gmail.js", () => ({
@@ -48,6 +50,7 @@ vi.mock("../../src/server/db/queries.js", () => ({
   upsertEmailMessages: mockUpsertEmailMessages,
   getEmailThread: mockGetEmailThread,
   getUnbucketedThreads: mockGetUnbucketedThreads,
+  unassignThread: mockUnassignThread,
 }));
 
 import * as email from "../../src/server/email.js";
@@ -340,26 +343,42 @@ describe("getThread", () => {
     mockUpsertEmailMessages.mockResolvedValue([]);
   });
 
-  it("always fetches from Gmail and upserts thread and messages", async () => {
-    mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
-    mockGetEmailThread.mockResolvedValue(makeDbThread("thread-1"));
-
-    await email.getThread("thread-1");
-
-    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
-    expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
-    expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns the thread from DB after upserting", async () => {
-    mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
-    const dbThread = { ...makeDbThread("thread-1"), messages: [] };
+  it("returns cached thread from DB when messages exist", async () => {
+    const dbThread = { ...makeDbThread("thread-1"), messages: [{ gmail_message_id: "msg-1" }] };
     mockGetEmailThread.mockResolvedValue(dbThread);
 
     const result = await email.getThread("thread-1");
 
-    expect(mockGetEmailThread).toHaveBeenCalledWith("thread-1");
     expect(result).toBe(dbThread);
+    expect(mockGetThread).not.toHaveBeenCalled();
+    expect(mockUpsertEmailThread).not.toHaveBeenCalled();
+  });
+
+  it("fetches from Gmail and upserts when not in DB", async () => {
+    mockGetEmailThread.mockResolvedValueOnce(null);
+    mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
+    const dbThread = { ...makeDbThread("thread-1"), messages: [{ gmail_message_id: "msg-1" }] };
+    mockGetEmailThread.mockResolvedValueOnce(dbThread);
+
+    const result = await email.getThread("thread-1");
+
+    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
+    expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
+    expect(result).toBe(dbThread);
+  });
+
+  it("fetches from Gmail when cached thread has no messages", async () => {
+    const emptyThread = { ...makeDbThread("thread-1"), messages: [] };
+    mockGetEmailThread.mockResolvedValueOnce(emptyThread);
+    mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
+    const fullThread = { ...makeDbThread("thread-1"), messages: [{ gmail_message_id: "msg-1" }] };
+    mockGetEmailThread.mockResolvedValueOnce(fullThread);
+
+    const result = await email.getThread("thread-1");
+
+    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(result).toBe(fullThread);
   });
 });
 
@@ -395,12 +414,29 @@ describe("sendMessage", () => {
 });
 
 describe("replyToThread", () => {
-  it("delegates to gmail.replyToThread with same arguments", async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
     mockReplyToThread.mockResolvedValue(undefined);
+    mockUpsertEmailThread.mockResolvedValue({});
+    mockUpsertEmailMessages.mockResolvedValue([]);
+  });
+
+  it("delegates to gmail.replyToThread with same arguments", async () => {
+    mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
 
     await email.replyToThread("thread-1", "msg-1", "Reply body");
 
     expect(mockReplyToThread).toHaveBeenCalledWith("thread-1", "msg-1", "Reply body");
+  });
+
+  it("re-syncs thread to DB after sending reply", async () => {
+    mockGetThread.mockResolvedValue(makeGmailThread("thread-1"));
+
+    await email.replyToThread("thread-1", "msg-1", "Reply body");
+
+    expect(mockGetThread).toHaveBeenCalledWith("thread-1");
+    expect(mockUpsertEmailThread).toHaveBeenCalledTimes(1);
+    expect(mockUpsertEmailMessages).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -421,12 +457,14 @@ describe("createDraft", () => {
 });
 
 describe("trashThread", () => {
-  it("delegates to gmail.trashThread with same thread ID", async () => {
+  it("delegates to gmail.trashThread and unassigns from bucket", async () => {
     mockTrashThread.mockResolvedValue(undefined);
+    mockUnassignThread.mockResolvedValue(undefined);
 
     await email.trashThread("thread-1");
 
     expect(mockTrashThread).toHaveBeenCalledWith("thread-1");
+    expect(mockUnassignThread).toHaveBeenCalledWith("thread-1");
   });
 });
 

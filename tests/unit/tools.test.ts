@@ -304,7 +304,7 @@ describe("sync_email tool", () => {
 describe("action_email tool", () => {
   describe("send action", () => {
     it("calls email.sendMessage with to, subject, body, and cc", async () => {
-      mockEmailSendMessage.mockResolvedValue({ id: "msg-1" });
+      mockEmailSendMessage.mockResolvedValue(undefined);
 
       const result = await handlers.action_email({
         action: "send",
@@ -318,13 +318,13 @@ describe("action_email tool", () => {
         cc: ["cc@example.com"],
       });
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.id).toBe("msg-1");
+      expect(parsed).toEqual({ ok: true });
     });
   });
 
   describe("reply action", () => {
     it("calls email.replyToThread with thread_id, message_id, body", async () => {
-      mockEmailReplyToThread.mockResolvedValue({ id: "msg-2" });
+      mockEmailReplyToThread.mockResolvedValue(undefined);
 
       const result = await handlers.action_email({
         action: "reply",
@@ -335,7 +335,7 @@ describe("action_email tool", () => {
 
       expect(mockEmailReplyToThread).toHaveBeenCalledWith("t1", "m1", "Thanks!");
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.id).toBe("msg-2");
+      expect(parsed).toEqual({ ok: true });
     });
   });
 
