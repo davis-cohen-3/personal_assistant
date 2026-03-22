@@ -44,12 +44,14 @@ export async function persistTokens(tokens: Credentials): Promise<void> {
 
   if (!tokens.expiry_date) throw new AppError("Missing expiry_date", 500);
 
+  if (!tokens.scope) throw new AppError("Missing scope in OAuth tokens", 500);
+  if (!tokens.token_type) throw new AppError("Missing token_type in OAuth tokens", 500);
+
   await upsertGoogleTokens({
     access_token: encrypt(tokens.access_token),
     refresh_token: encrypt(refreshToken),
-    scope: tokens.scope ?? "",
-    token_type: tokens.token_type ?? "Bearer",
-    // FEAS-011: explicit epoch ms → Date conversion
+    scope: tokens.scope,
+    token_type: tokens.token_type,
     expiry_date: new Date(tokens.expiry_date),
   });
 }

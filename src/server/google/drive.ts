@@ -42,15 +42,10 @@ function mapFile(file: {
 
 function isExportSizeError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
-  const e = err as Record<string, unknown>;
-  // Google returns 403 with message about export size for files over 10MB
-  if (e.status !== 403) return false;
-  const msg = String(e.message ?? "");
-  return (
-    msg.toLowerCase().includes("export") ||
-    msg.toLowerCase().includes("size") ||
-    msg.toLowerCase().includes("limit")
-  );
+  if (!("status" in err) || err.status !== 403) return false;
+  if (!("message" in err) || typeof err.message !== "string") return false;
+  const msg = err.message.toLowerCase();
+  return msg.includes("export") || msg.includes("size") || msg.includes("limit");
 }
 
 export async function searchFiles(query: string, opts?: SearchFilesOptions): Promise<DriveFile[]> {
@@ -63,9 +58,7 @@ export async function searchFiles(query: string, opts?: SearchFilesOptions): Pro
     fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
     ...(opts?.orderBy ? { orderBy: opts.orderBy } : {}),
   });
-  const files = (res.data.files ?? []).map(mapFile);
-  console.info("drive.searchFiles result", { count: files.length });
-  return files;
+  return (res.data.files ?? []).map(mapFile);
 }
 
 export async function listRecentFiles(maxResults?: number): Promise<DriveFile[]> {
@@ -77,9 +70,7 @@ export async function listRecentFiles(maxResults?: number): Promise<DriveFile[]>
     fields: "files(id,name,mimeType,modifiedTime,webViewLink)",
     q: "trashed = false",
   });
-  const files = (res.data.files ?? []).map(mapFile);
-  console.info("drive.listRecentFiles result", { count: files.length });
-  return files;
+  return (res.data.files ?? []).map(mapFile);
 }
 
 export async function readDocument(fileId: string): Promise<string> {

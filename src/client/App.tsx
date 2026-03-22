@@ -243,12 +243,12 @@ export default function App() {
         }: {
           authenticated: boolean;
           csrfToken: string;
-          googleConnected?: boolean;
+          googleConnected: boolean;
         }) => {
           if (isAuth) {
             setCsrfToken(csrfToken);
             setAuthenticated(true);
-            setGoogleConnected(isGoogleConnected ?? false);
+            setGoogleConnected(isGoogleConnected);
           } else {
             setAuthenticated(false);
           }

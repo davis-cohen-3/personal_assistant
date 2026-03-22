@@ -197,13 +197,7 @@ apiRoutes.get("/bucket-templates/:id", async (c) => {
 });
 
 apiRoutes.post("/bucket-templates/:id/apply", async (c) => {
-  const templateId = c.req.param("id");
-  console.info("route:bucket-templates apply", { templateId });
-  const buckets = await queries.applyBucketTemplate(templateId);
-  console.info("route:bucket-templates apply complete", {
-    templateId,
-    bucketsCreated: buckets.length,
-  });
+  const buckets = await queries.applyBucketTemplate(c.req.param("id"));
   return c.json(buckets, 201);
 });
 

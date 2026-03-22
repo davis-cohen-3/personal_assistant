@@ -11,7 +11,7 @@ import {
 } from "./db/queries.js";
 import { createCustomMcpServer } from "./tools.js";
 
-const BASE_SYSTEM_PROMPT = `You are a personal assistant that helps manage email, calendar, and drive.
+const SYSTEM_PROMPT = `You are a personal assistant that helps manage email, calendar, and drive.
 
 ## Tools
 You have access to email tools (sync_email for reading, action_email for sending/replying/drafting),
@@ -43,8 +43,6 @@ When compacting conversation history, always preserve:
 - Any pending actions awaiting approval
 - Names and context of participants discussed in recent messages
 - Active bucket assignments mentioned recently`;
-
-const SYSTEM_PROMPT = BASE_SYSTEM_PROMPT;
 
 const AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
   "email-classifier": {
@@ -154,9 +152,12 @@ export async function streamQuery(
 
       // Detect tool_use blocks and forward tool name to client
       if (msg.type === "stream_event" && msg.event.type === "content_block_start") {
-        const block = (msg.event as Record<string, unknown>).content_block as
-          | { type: string; name?: string }
-          | undefined;
+        const evt = msg.event as Record<string, unknown>;
+        const raw = evt.content_block;
+        const block =
+          typeof raw === "object" && raw !== null && "type" in raw
+            ? (raw as { type: string; name?: string })
+            : undefined;
         if (block?.type === "tool_use" && block.name) {
           hasToolUse = true;
           const displayName = toolDisplayName(block.name);

@@ -95,7 +95,6 @@ export async function listEvents(
     ...(opts?.q !== undefined ? { q: opts.q } : {}),
   });
   const events = (res.data.items ?? []).map(parseEvent);
-  console.info("calendar.listEvents result", { count: events.length });
   return events;
 }
 
@@ -134,14 +133,7 @@ export async function createEvent(input: CreateEventInput): Promise<CalendarEven
       ...(input.attendees ? { attendees: input.attendees.map((email) => ({ email })) } : {}),
     },
   });
-  const event = parseEvent(res.data);
-  console.info("calendar.createEvent complete", {
-    eventId: event.id,
-    summary: event.summary,
-    start: event.start,
-    end: event.end,
-  });
-  return event;
+  return parseEvent(res.data);
 }
 
 export async function updateEvent(
@@ -175,14 +167,7 @@ export async function updateEvent(
     sendUpdates: "all",
     requestBody,
   });
-  const event = parseEvent(res.data);
-  console.info("calendar.updateEvent complete", {
-    eventId: event.id,
-    summary: event.summary,
-    start: event.start,
-    end: event.end,
-  });
-  return event;
+  return parseEvent(res.data);
 }
 
 export async function deleteEvent(eventId: string): Promise<void> {
@@ -193,7 +178,6 @@ export async function deleteEvent(eventId: string): Promise<void> {
     eventId,
     sendUpdates: "all",
   });
-  console.info("calendar.deleteEvent complete", { eventId });
 }
 
 export async function checkFreeBusy(

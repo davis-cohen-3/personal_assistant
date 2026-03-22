@@ -51,7 +51,9 @@ export function useBuckets() {
 
   useEffect(() => {
     const id = setInterval(async () => {
-      await fetchApi("/api/gmail/sync", { method: "POST" }).catch(() => {});
+      await fetchApi("/api/gmail/sync", { method: "POST" }).catch((err: unknown) => {
+        console.warn("Background sync failed", { error: err });
+      });
       await refetch();
     }, POLL_INTERVAL_MS);
     return () => clearInterval(id);

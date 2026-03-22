@@ -185,10 +185,6 @@ export async function getEmailThread(gmailThreadId: string) {
   return { ...thread, messages };
 }
 
-export async function listEmailThreads() {
-  return db.select().from(emailThreads).orderBy(desc(emailThreads.last_message_at));
-}
-
 export async function listEmailThreadsByGmailIds(gmailIds: string[]) {
   if (gmailIds.length === 0) return [];
   return db.select().from(emailThreads).where(inArray(emailThreads.gmail_thread_id, gmailIds));
@@ -301,23 +297,6 @@ export async function assignThreadsBatch(
 
 export async function markAllForRebucket() {
   await db.update(threadBuckets).set({ needs_rebucket: true });
-}
-
-export async function getThreadsNeedingRebucket(limit: number) {
-  return db
-    .select({ threadBucket: threadBuckets, thread: emailThreads })
-    .from(threadBuckets)
-    .innerJoin(emailThreads, eq(threadBuckets.gmail_thread_id, emailThreads.gmail_thread_id))
-    .where(eq(threadBuckets.needs_rebucket, true))
-    .limit(Math.min(limit, BATCH_SIZE));
-}
-
-export async function clearRebucketFlag(gmailThreadIds: string[]) {
-  if (gmailThreadIds.length === 0) return;
-  await db
-    .update(threadBuckets)
-    .set({ needs_rebucket: false })
-    .where(inArray(threadBuckets.gmail_thread_id, gmailThreadIds));
 }
 
 export async function listConversations() {

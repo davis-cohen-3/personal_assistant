@@ -121,7 +121,6 @@ export async function getThread(id: string): Promise<GmailThread> {
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
   const res = await gmail.users.threads.get({ userId: "me", id, format: "full" });
   const messages = (res.data.messages ?? []).map(decodeMessage);
-  console.info("gmail.getThread result", { id, messageCount: messages.length });
   return { id: res.data.id ?? id, messages };
 }
 
@@ -134,7 +133,6 @@ export async function searchThreads(query: string, maxResults: number): Promise<
     snippet: t.snippet ?? undefined,
     historyId: t.historyId ?? undefined,
   }));
-  console.info("gmail.searchThreads result", { query, count: threads.length });
   return threads;
 }
 
@@ -170,7 +168,6 @@ export async function sendMessage(
   }
 
   await gmail.users.messages.send({ userId: "me", requestBody: { raw: msg.asEncoded() } });
-  console.info("gmail.sendMessage complete", { from, to, subject, cc: opts?.cc });
 }
 
 export async function replyToThread(
@@ -210,11 +207,6 @@ export async function replyToThread(
     userId: "me",
     requestBody: { raw: msg.asEncoded(), threadId },
   });
-  console.info("gmail.replyToThread complete", {
-    threadId,
-    to: originalFrom,
-    subject: replySubject,
-  });
 }
 
 export async function createDraft(
@@ -252,7 +244,6 @@ export async function createDraft(
 
   const draftId = res.data.id;
   if (!draftId) throw new AppError("Draft created but no ID returned", 500);
-  console.info("gmail.createDraft complete", { draftId, to, subject, threadId });
   return draftId;
 }
 
@@ -264,7 +255,6 @@ export async function modifyLabels(id: string, add: string[], remove: string[]):
     id,
     requestBody: { addLabelIds: add, removeLabelIds: remove },
   });
-  console.info("gmail.modifyLabels complete", { id, add, remove });
 }
 
 export async function markAsRead(id: string): Promise<void> {
@@ -279,7 +269,6 @@ export async function trashThread(threadId: string): Promise<void> {
     userId: "me",
     id: threadId,
   });
-  console.info("gmail.trashThread complete", { threadId });
 }
 
 export interface GmailLabel {
