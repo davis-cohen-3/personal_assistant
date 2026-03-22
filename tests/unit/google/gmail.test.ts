@@ -7,6 +7,7 @@ const {
   mockThreadsGet,
   mockThreadsList,
   mockThreadsModify,
+  mockThreadsTrash,
   mockDraftsCreate,
   mockLabelsList,
   mockGetProfile,
@@ -28,6 +29,7 @@ const {
     mockThreadsGet: vi.fn(),
     mockThreadsList: vi.fn(),
     mockThreadsModify: vi.fn(),
+    mockThreadsTrash: vi.fn(),
     mockDraftsCreate: vi.fn(),
     mockLabelsList: vi.fn(),
     mockGetProfile: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("googleapis", () => ({
           get: mockThreadsGet,
           list: mockThreadsList,
           modify: mockThreadsModify,
+          trash: mockThreadsTrash,
         },
         drafts: {
           create: mockDraftsCreate,
@@ -71,7 +74,7 @@ vi.mock("../../../src/server/google/auth.js", () => ({
 
 import type { EmailAttachment } from "../../../src/server/google/gmail.js";
 import {
-  archiveThread,
+  trashThread,
   createDraft,
   getMessage,
   getThread,
@@ -460,18 +463,15 @@ describe("markAsRead", () => {
   });
 });
 
-describe("archiveThread", () => {
-  it("calls threads.modify to remove INBOX label", async () => {
-    mockThreadsModify.mockResolvedValue({ data: {} });
+describe("trashThread", () => {
+  it("calls threads.trash", async () => {
+    mockThreadsTrash.mockResolvedValue({ data: {} });
 
-    await archiveThread("thread1");
+    await trashThread("thread1");
 
-    expect(mockThreadsModify).toHaveBeenCalledWith({
+    expect(mockThreadsTrash).toHaveBeenCalledWith({
       userId: "me",
       id: "thread1",
-      requestBody: {
-        removeLabelIds: ["INBOX"],
-      },
     });
   });
 });

@@ -19,10 +19,10 @@ interface Thread {
 interface Props {
   threadId: string;
   onClose: () => void;
-  onArchive: () => void;
+  onTrash: () => void;
 }
 
-export default function ThreadDetail({ threadId, onClose, onArchive }: Props) {
+export default function ThreadDetail({ threadId, onClose, onTrash }: Props) {
   const [thread, setThread] = useState<Thread | null>(null);
   const [loading, setLoading] = useState(true);
   const [replyBody, setReplyBody] = useState("");
@@ -83,12 +83,12 @@ export default function ThreadDetail({ threadId, onClose, onArchive }: Props) {
     }
   };
 
-  const handleArchive = async () => {
+  const handleTrash = async () => {
     try {
-      await fetchApi(`/api/gmail/threads/${threadId}/archive`, { method: "POST" });
-      onArchive();
+      await fetchApi(`/api/gmail/threads/${threadId}/trash`, { method: "POST" });
+      onTrash();
     } catch (err) {
-      console.error("Failed to archive thread", { threadId, error: err });
+      console.error("Failed to trash thread", { threadId, error: err });
     }
   };
 
@@ -98,8 +98,8 @@ export default function ThreadDetail({ threadId, onClose, onArchive }: Props) {
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="font-semibold truncate">{thread?.subject ?? "Loading…"}</h2>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleArchive}>
-              Archive
+            <Button variant="outline" size="sm" onClick={handleTrash}>
+              Trash
             </Button>
             <Button variant="ghost" size="sm" onClick={onClose}>
               ✕

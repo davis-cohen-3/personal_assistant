@@ -32,7 +32,6 @@ export type {
   ThreadSummary,
 } from "./gmail.js";
 export {
-  archiveThread,
   createDraft,
   getMessage,
   getThread,
@@ -42,4 +41,5 @@ export {
   replyToThread,
   searchThreads,
   sendMessage,
+  trashThread,
 } from "./gmail.js";

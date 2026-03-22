@@ -49,7 +49,7 @@ function AuthenticatedApp() {
         <ThreadDetail
           threadId={activeThread}
           onClose={() => setActiveThread(null)}
-          onArchive={() => {
+          onTrash={() => {
             setActiveThread(null);
             bucketsHook.refetch();
           }}

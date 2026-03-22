@@ -9,14 +9,14 @@ const {
   mockEmailGetThread,
   mockEmailSendMessage,
   mockEmailReplyToThread,
-  mockEmailArchiveThread,
+  mockEmailTrashThread,
   mockEmailMarkAsRead,
 } = vi.hoisted(() => ({
   mockEmailSearch: vi.fn(),
   mockEmailGetThread: vi.fn(),
   mockEmailSendMessage: vi.fn(),
   mockEmailReplyToThread: vi.fn(),
-  mockEmailArchiveThread: vi.fn(),
+  mockEmailTrashThread: vi.fn(),
   mockEmailMarkAsRead: vi.fn(),
 }));
 
@@ -73,7 +73,7 @@ vi.mock("../../src/server/email.js", () => ({
   getThread: mockEmailGetThread,
   sendMessage: mockEmailSendMessage,
   replyToThread: mockEmailReplyToThread,
-  archiveThread: mockEmailArchiveThread,
+  trashThread: mockEmailTrashThread,
   markAsRead: mockEmailMarkAsRead,
 }));
 
@@ -245,17 +245,17 @@ describe("POST /api/gmail/threads/:id/reply", () => {
   });
 });
 
-describe("POST /api/gmail/threads/:id/archive", () => {
+describe("POST /api/gmail/threads/:id/trash", () => {
   it("returns 200 { ok: true }", async () => {
-    mockEmailArchiveThread.mockResolvedValue(undefined);
+    mockEmailTrashThread.mockResolvedValue(undefined);
 
-    const res = await app.request("/api/gmail/threads/thread-1/archive", {
+    const res = await app.request("/api/gmail/threads/thread-1/trash", {
       method: "POST",
     });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockEmailArchiveThread).toHaveBeenCalledWith("thread-1");
+    expect(mockEmailTrashThread).toHaveBeenCalledWith("thread-1");
   });
 });
 

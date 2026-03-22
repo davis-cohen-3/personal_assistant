@@ -100,8 +100,8 @@ apiRoutes.post("/gmail/threads/:id/reply", async (c) => {
   return c.json(result, 201);
 });
 
-apiRoutes.post("/gmail/threads/:id/archive", async (c) => {
-  await email.archiveThread(c.req.param("id"));
+apiRoutes.post("/gmail/threads/:id/trash", async (c) => {
+  await email.trashThread(c.req.param("id"));
   return c.json({ ok: true });
 });
 

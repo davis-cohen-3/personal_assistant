@@ -152,10 +152,10 @@ export async function createDraft(to: string, subject: string, body: string, thr
   return draftId;
 }
 
-export async function archiveThread(gmailThreadId: string) {
-  console.info("email.archiveThread", { gmailThreadId });
-  await gmail.archiveThread(gmailThreadId);
-  console.info("email.archiveThread complete", { gmailThreadId });
+export async function trashThread(gmailThreadId: string) {
+  console.info("email.trashThread", { gmailThreadId });
+  await gmail.trashThread(gmailThreadId);
+  console.info("email.trashThread complete", { gmailThreadId });
 }
 
 export async function markAsRead(messageId: string) {

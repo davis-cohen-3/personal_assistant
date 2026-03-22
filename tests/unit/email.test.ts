@@ -6,7 +6,7 @@ const {
   mockSendMessage,
   mockReplyToThread,
   mockCreateDraft,
-  mockArchiveThread,
+  mockTrashThread,
   mockMarkAsRead,
 } = vi.hoisted(() => ({
   mockSearchThreads: vi.fn(),
@@ -14,7 +14,7 @@ const {
   mockSendMessage: vi.fn(),
   mockReplyToThread: vi.fn(),
   mockCreateDraft: vi.fn(),
-  mockArchiveThread: vi.fn(),
+  mockTrashThread: vi.fn(),
   mockMarkAsRead: vi.fn(),
 }));
 
@@ -38,7 +38,7 @@ vi.mock("../../src/server/google/gmail.js", () => ({
   sendMessage: mockSendMessage,
   replyToThread: mockReplyToThread,
   createDraft: mockCreateDraft,
-  archiveThread: mockArchiveThread,
+  trashThread: mockTrashThread,
   markAsRead: mockMarkAsRead,
 }));
 
@@ -420,13 +420,13 @@ describe("createDraft", () => {
   });
 });
 
-describe("archiveThread", () => {
-  it("delegates to gmail.archiveThread with same thread ID", async () => {
-    mockArchiveThread.mockResolvedValue(undefined);
+describe("trashThread", () => {
+  it("delegates to gmail.trashThread with same thread ID", async () => {
+    mockTrashThread.mockResolvedValue(undefined);
 
-    await email.archiveThread("thread-1");
+    await email.trashThread("thread-1");
 
-    expect(mockArchiveThread).toHaveBeenCalledWith("thread-1");
+    expect(mockTrashThread).toHaveBeenCalledWith("thread-1");
   });
 });
 

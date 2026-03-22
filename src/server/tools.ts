@@ -144,7 +144,7 @@ export const handlers = {
   },
 
   action_email: async (params: {
-    action: "send" | "reply" | "draft" | "archive" | "mark_read";
+    action: "send" | "reply" | "draft" | "trash" | "mark_read";
     to?: string;
     cc?: string[];
     subject?: string;
@@ -187,9 +187,9 @@ export const handlers = {
         );
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
-      case "archive": {
-        if (!params.thread_id) return err("thread_id is required for archive action");
-        await email.archiveThread(params.thread_id);
+      case "trash": {
+        if (!params.thread_id) return err("thread_id is required for trash action");
+        await email.trashThread(params.thread_id);
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
       case "mark_read": {
@@ -359,9 +359,9 @@ export function createCustomMcpServer() {
 
       tool(
         "action_email",
-        "Perform actions on emails: send, reply, draft, archive, mark as read. All write operations require user approval.",
+        "Perform actions on emails: send, reply, draft, trash, mark as read. All write operations require user approval.",
         {
-          action: z.enum(["send", "reply", "draft", "archive", "mark_read"]),
+          action: z.enum(["send", "reply", "draft", "trash", "mark_read"]),
           to: z.string().optional(),
           cc: z.array(z.string()).optional(),
           subject: z.string().optional(),

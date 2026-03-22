@@ -242,9 +242,8 @@ export default function Chat({ conversationId, onAgentDone, onTitleUpdate }: Pro
             <Spinner />
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4">
+          <div className="flex flex-col items-center justify-center h-full">
             <p className="text-muted-foreground">Ready when you are.</p>
-            <Button onClick={() => send("Start my day")}>Start Day</Button>
           </div>
         ) : (
           <>

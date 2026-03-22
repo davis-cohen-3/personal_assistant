@@ -26,7 +26,7 @@ const {
   mockEmailSendMessage,
   mockEmailReplyToThread,
   mockEmailCreateDraft,
-  mockEmailArchiveThread,
+  mockEmailTrashThread,
   mockEmailMarkAsRead,
 } = vi.hoisted(() => ({
   mockEmailSyncInbox: vi.fn(),
@@ -36,7 +36,7 @@ const {
   mockEmailSendMessage: vi.fn(),
   mockEmailReplyToThread: vi.fn(),
   mockEmailCreateDraft: vi.fn(),
-  mockEmailArchiveThread: vi.fn(),
+  mockEmailTrashThread: vi.fn(),
   mockEmailMarkAsRead: vi.fn(),
 }));
 
@@ -86,7 +86,7 @@ vi.mock("../../src/server/email.js", () => ({
   sendMessage: mockEmailSendMessage,
   replyToThread: mockEmailReplyToThread,
   createDraft: mockEmailCreateDraft,
-  archiveThread: mockEmailArchiveThread,
+  trashThread: mockEmailTrashThread,
   markAsRead: mockEmailMarkAsRead,
 }));
 
@@ -362,13 +362,13 @@ describe("action_email tool", () => {
     });
   });
 
-  describe("archive action", () => {
-    it("calls email.archiveThread with thread_id and returns ok: true", async () => {
-      mockEmailArchiveThread.mockResolvedValue(undefined);
+  describe("trash action", () => {
+    it("calls email.trashThread with thread_id and returns ok: true", async () => {
+      mockEmailTrashThread.mockResolvedValue(undefined);
 
-      const result = await handlers.action_email({ action: "archive", thread_id: "t1" });
+      const result = await handlers.action_email({ action: "trash", thread_id: "t1" });
 
-      expect(mockEmailArchiveThread).toHaveBeenCalledWith("t1");
+      expect(mockEmailTrashThread).toHaveBeenCalledWith("t1");
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.ok).toBe(true);
     });

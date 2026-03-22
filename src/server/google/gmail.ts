@@ -272,15 +272,14 @@ export async function markAsRead(id: string): Promise<void> {
   return modifyLabels(id, [], ["UNREAD"]);
 }
 
-export async function archiveThread(threadId: string): Promise<void> {
-  console.info("gmail.archiveThread", { threadId });
+export async function trashThread(threadId: string): Promise<void> {
+  console.info("gmail.trashThread", { threadId });
   const gmail = google.gmail({ version: "v1", auth: getAuthClient() });
-  await gmail.users.threads.modify({
+  await gmail.users.threads.trash({
     userId: "me",
     id: threadId,
-    requestBody: { removeLabelIds: ["INBOX"] },
   });
-  console.info("gmail.archiveThread complete", { threadId });
+  console.info("gmail.trashThread complete", { threadId });
 }
 
 export interface GmailLabel {
