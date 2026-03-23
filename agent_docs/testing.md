@@ -5,6 +5,7 @@
 | What you're testing | Type | Location | DB |
 |---------------------|------|----------|----|
 | Query functions | Integration | `tests/integration/db/` | Real Postgres |
+| Tenant isolation | Integration | `tests/integration/db/` | Real Postgres |
 | Google connectors | Unit (mocked) | `tests/unit/google/` | Mocked googleapis |
 | MCP tool handlers | Unit (mocked) | `tests/unit/tools.test.ts` | Mocked |
 | REST routes | Unit (mocked) | `tests/unit/routes.test.ts` | Mocked |
@@ -13,75 +14,139 @@
 
 **Rule of thumb:** If it touches the database, use integration tests with real DB. If it calls external APIs, mock them.
 
-## Test Structure
+## Test Runner
 
-Group by behavior. Use descriptive names.
+Vitest with globals enabled. Config in `vitest.config.ts`:
 
 ```typescript
-describe('getBuckets', () => {
-  it('returns empty array when no buckets exist', async () => {
-    const buckets = await getBuckets();
+{
+  globals: true,           // describe/it/expect available globally
+  environment: 'node',
+  include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
+  setupFiles: ['tests/setup.ts'],
+  fileParallelism: false,  // sequential execution
+}
+```
 
+## Integration Tests (DB Queries)
+
+Use real Postgres. Create a test user in `beforeEach`, clean up with `cleanDatabase()`.
+
+```typescript
+import { db, pool } from '../../../src/server/db/index.js';
+import { upsertUser, createBucket, listBuckets } from '../../../src/server/db/queries.js';
+
+let testUserId: string;
+
+beforeEach(async () => {
+  await cleanDatabase();
+  const user = await upsertUser('test@example.com', 'Test User');
+  testUserId = user.id;
+});
+
+afterAll(async () => {
+  await pool.end();
+});
+
+describe('listBuckets', () => {
+  it('returns empty array when no buckets exist', async () => {
+    const buckets = await listBuckets(testUserId);
     expect(buckets).toEqual([]);
   });
 
   it('returns buckets ordered by sort_order', async () => {
-    await createBucket({ name: 'B', sortOrder: 2, description: 'Second' });
-    await createBucket({ name: 'A', sortOrder: 1, description: 'First' });
+    await createBucket(testUserId, 'B', 'Second');
+    await createBucket(testUserId, 'A', 'First');
 
-    const buckets = await getBuckets();
-
+    const buckets = await listBuckets(testUserId);
     expect(buckets[0].name).toBe('A');
     expect(buckets[1].name).toBe('B');
   });
 });
 ```
 
-## Route Tests
+## Route Tests (Mocked)
 
-Mock queries and connectors. Test HTTP layer (status codes, validation, response shape).
+Mock all dependencies. Create a test app with middleware that injects `userId`.
 
 ```typescript
-describe('GET /api/buckets', () => {
-  it('returns 200 with buckets', async () => {
-    const res = await app.request('/api/buckets', {
-      headers: { Cookie: testSessionCookie },
-    });
+const { mockEmailSearch } = vi.hoisted(() => ({ mockEmailSearch: vi.fn() }));
+
+vi.mock('../../src/server/email.js', () => ({
+  search: mockEmailSearch,
+}));
+
+function createTestApp() {
+  const app = new Hono();
+  app.use('*', async (c, next) => {
+    c.set('userId', TEST_USER_ID);
+    await next();
+  });
+  app.route('/api', apiRoutes);
+  return app;
+}
+
+describe('GET /api/gmail/threads', () => {
+  it('returns 200 with threads array', async () => {
+    mockEmailSearch.mockResolvedValue([{ id: 't1' }]);
+
+    const res = await app.request('/api/gmail/threads');
 
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(Array.isArray(body)).toBe(true);
+    expect(mockEmailSearch).toHaveBeenCalledWith(TEST_USER_ID, 'is:inbox', 25);
+  });
+});
+```
+
+## MCP Tool Handler Tests (Mocked)
+
+Call `handlers.toolName(userId, params)` directly. Check `.content[0].text` (JSON string) and `.isError`.
+
+```typescript
+describe('buckets tool', () => {
+  it('calls queries.listBuckets() and returns JSON', async () => {
+    mockListBuckets.mockResolvedValue([{ id: 'b1', name: 'Inbox' }]);
+
+    const result = await handlers.buckets(TEST_USER_ID, { action: 'list' });
+
+    expect(mockListBuckets).toHaveBeenCalledWith(TEST_USER_ID);
+    expect(JSON.parse(result.content[0].text)).toEqual([{ id: 'b1', name: 'Inbox' }]);
   });
 
-  it('returns 401 without session', async () => {
-    const res = await app.request('/api/buckets');
+  it('returns error dict when missing params', async () => {
+    const result = await handlers.buckets(TEST_USER_ID, { action: 'assign' });
 
-    expect(res.status).toBe(401);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toMatch(/assignments is required/);
   });
 });
 ```
 
 ## Google Connector Tests (Mocked)
 
-Mock the googleapis SDK. Test our wrapper logic.
+Mock the googleapis SDK deeply. Connectors take `OAuth2Client`, not `userId`.
 
 ```typescript
-vi.mock('googleapis');
+const mockMessagesGet = vi.fn();
+vi.mock('googleapis', () => ({
+  google: {
+    gmail: vi.fn(() => ({
+      users: {
+        messages: { get: mockMessagesGet },
+      },
+    })),
+  },
+}));
 
-describe('listThreads', () => {
-  it('passes query and maxResults to Gmail API', async () => {
-    mockGmail.users.threads.list.mockResolvedValue({
-      data: { threads: [{ id: '123' }] },
-    });
+const mockAuth = {} as never;
 
-    const result = await listThreads({ query: 'is:unread', maxResults: 10 });
+describe('getMessage', () => {
+  it('returns parsed message', async () => {
+    mockMessagesGet.mockResolvedValue({ data: { id: 'msg-1', payload: { ... } } });
 
-    expect(mockGmail.users.threads.list).toHaveBeenCalledWith({
-      userId: 'me',
-      q: 'is:unread',
-      maxResults: 10,
-    });
-    expect(result).toHaveLength(1);
+    const msg = await getMessage(mockAuth, 'msg-1');
+
+    expect(msg.id).toBe('msg-1');
   });
 });
 ```
@@ -89,14 +154,9 @@ describe('listThreads', () => {
 ## Exception Testing
 
 ```typescript
-it('throws NotFoundError for nonexistent bucket', async () => {
-  await expect(updateBucket('nonexistent-id', { name: 'X' }))
-    .rejects.toThrow(NotFoundError);
-});
-
-it('throws ValidationError for empty name', async () => {
-  await expect(createBucket({ name: '', description: 'test', sortOrder: 1 }))
-    .rejects.toThrow(ValidationError);
+it('throws AppError for nonexistent bucket', async () => {
+  await expect(updateBucket(testUserId, 'nonexistent-id', { name: 'X' }))
+    .rejects.toBeInstanceOf(AppError);
 });
 ```
 
@@ -104,23 +164,29 @@ it('throws ValidationError for empty name', async () => {
 
 ```typescript
 // ❌ Fallback that hides failures
-const bucket = await getBucket('invalid') ?? testBucket;
+const bucket = await getBucketTemplate('invalid') ?? testBucket;
 
 // ✅ Assert the exception
-await expect(getBucket('invalid')).rejects.toThrow(NotFoundError);
+await expect(updateBucket(userId, 'invalid', {})).rejects.toBeInstanceOf(AppError);
 
 // ❌ Mocking DB in integration tests
 vi.mock('../db/queries');
 
 // ✅ Integration tests use real DB
-const result = await getBuckets();
+const result = await listBuckets(testUserId);
 
 // ❌ Testing implementation details
 expect(db.select).toHaveBeenCalledWith(/* SQL */);
 
 // ✅ Testing behavior
-const buckets = await getBuckets();
+const buckets = await listBuckets(testUserId);
 expect(buckets[0].name).toBe('Important');
+
+// ❌ Forgetting userId
+await createBucket('My Bucket', 'desc');
+
+// ✅ Always pass userId first
+await createBucket(testUserId, 'My Bucket', 'desc');
 ```
 
 ## Running Tests
@@ -129,4 +195,6 @@ expect(buckets[0].name).toBe('Important');
 pnpm test                                # All tests
 pnpm test -- --grep "buckets"            # Pattern match
 pnpm test -- tests/integration/db/       # Specific directory
+pnpm test:watch                          # Watch mode
+pnpm test:coverage                       # With coverage
 ```

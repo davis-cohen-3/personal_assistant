@@ -74,15 +74,16 @@ export async function withUserTokens(userId: string): Promise<OAuth2Client> {
   });
 
   let pendingTokenPersist: Promise<void> | null = null;
+  let tokenPersistError: unknown = null;
 
   client.on("tokens", (tokens) => {
     console.info("google.auth token refresh received", {
       userId,
       expiryDate: tokens.expiry_date,
     });
-    pendingTokenPersist = persistTokens(userId, tokens);
-    pendingTokenPersist.catch((err) => {
-      console.error("Failed to persist refreshed tokens", { error: err });
+    tokenPersistError = null;
+    pendingTokenPersist = persistTokens(userId, tokens).catch((err) => {
+      tokenPersistError = err;
     });
   });
 
@@ -92,6 +93,11 @@ export async function withUserTokens(userId: string): Promise<OAuth2Client> {
     if (pendingTokenPersist) {
       await pendingTokenPersist;
       pendingTokenPersist = null;
+      if (tokenPersistError) {
+        throw new AppError("Failed to persist refreshed Google tokens", 500, {
+          cause: tokenPersistError as Error,
+        });
+      }
     }
     return result;
   };

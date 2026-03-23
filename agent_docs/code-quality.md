@@ -92,7 +92,8 @@ app.get('/api/buckets', async (c) => {
 
 // CORRECT — delegate to query function
 app.get('/api/buckets', async (c) => {
-  const buckets = await getBucketsWithThreads();
+  const userId = c.get('userId') as string;
+  const buckets = await getBucketsWithThreads(userId);
   return c.json(buckets);
 });
 ```

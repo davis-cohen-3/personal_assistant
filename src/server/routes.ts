@@ -225,6 +225,7 @@ apiRoutes.get("/bucket-templates", async (c) => {
 
 apiRoutes.get("/bucket-templates/:id", async (c) => {
   const template = await queries.getBucketTemplate(c.req.param("id"));
+  if (!template) return c.json({ error: "Bucket template not found" }, 404);
   return c.json(template);
 });
 

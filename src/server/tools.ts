@@ -111,6 +111,8 @@ export const handlers = {
           ],
         };
       }
+      default:
+        return err(`Unknown action: ${params.action}`);
     }
   },
 
@@ -148,6 +150,8 @@ export const handlers = {
         const result = await email.getUnbucketedThreads(userId);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
+      default:
+        return err(`Unknown action: ${params.action}`);
     }
   },
 
@@ -209,6 +213,8 @@ export const handlers = {
         await email.markAsRead(userId, params.message_id);
         return { content: [{ type: "text" as const, text: JSON.stringify({ ok: true }) }] };
       }
+      default:
+        return err(`Unknown action: ${params.action}`);
     }
   },
 
@@ -287,6 +293,8 @@ export const handlers = {
         const result = await calendar.checkFreeBusy(auth, params.time_min, params.time_max);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
+      default:
+        return err(`Unknown action: ${params.action}`);
     }
   },
 
@@ -327,6 +335,8 @@ export const handlers = {
         const result = await drive.getFileMetadata(auth, params.file_id);
         return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
       }
+      default:
+        return err(`Unknown action: ${params.action}`);
     }
   },
 };
@@ -399,8 +409,18 @@ export function createCustomMcpServer(userId: string) {
         "Read, create, update, and delete Google Calendar events. Check availability. Write actions (create, update, delete) require user approval.",
         {
           action: z.enum(["list", "get", "create", "update", "delete", "free_busy"]),
-          time_min: z.string().optional().describe("ISO 8601 datetime (list, free_busy)"),
-          time_max: z.string().optional().describe("ISO 8601 datetime (list, free_busy)"),
+          time_min: z
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 datetime with timezone, e.g. 2026-03-23T00:00:00Z (list, free_busy)",
+            ),
+          time_max: z
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 datetime with timezone, e.g. 2026-03-23T23:59:59Z (list, free_busy)",
+            ),
           event_id: z.string().optional().describe("Event ID (get, update, delete)"),
           summary: z.string().optional().describe("Event title (create, update)"),
           description: z.string().optional().describe("Event description (create, update)"),
