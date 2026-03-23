@@ -1,5 +1,6 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import * as bucketOps from "./buckets.js";
 import * as queries from "./db/queries.js";
 import * as email from "./email.js";
 import { withUserTokens } from "./google/auth.js";
@@ -47,8 +48,7 @@ export const handlers = {
       case "create": {
         if (!params.name) return err("name is required for create action");
         if (!params.description) return err("description is required for create action");
-        const result = await queries.createBucket(userId, params.name, params.description);
-        await queries.markAllForRebucket(userId);
+        const result = await bucketOps.createBucket(userId, params.name, params.description);
         console.info("tool:buckets complete", {
           action: "create",
           id: result.id,
@@ -87,7 +87,7 @@ export const handlers = {
         if (!params.assignments) return err(`assignments is required, max ${BATCH_SIZE} per batch`);
         if (params.assignments.length > BATCH_SIZE)
           return err(`max ${BATCH_SIZE} assignments per batch`);
-        const result = await queries.assignThreadsBatch(
+        const result = await bucketOps.assignThreadsBatch(
           userId,
           params.assignments.map((a) => ({
             gmailThreadId: a.gmail_thread_id,

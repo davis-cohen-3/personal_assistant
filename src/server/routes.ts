@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import * as bucketOps from "./buckets.js";
 import * as queries from "./db/queries.js";
 import * as email from "./email.js";
 import type { AppEnv } from "./env.js";
@@ -186,8 +187,7 @@ apiRoutes.get("/buckets", async (c) => {
 apiRoutes.post("/buckets", async (c) => {
   const userId = c.get("userId") as string;
   const body = createBucketSchema.parse(await c.req.json());
-  const bucket = await queries.createBucket(userId, body.name, body.description);
-  await queries.markAllForRebucket(userId);
+  const bucket = await bucketOps.createBucket(userId, body.name, body.description);
   return c.json({ ...bucket, rebucket_required: true }, 201);
 });
 
@@ -195,7 +195,7 @@ apiRoutes.post("/buckets", async (c) => {
 apiRoutes.post("/buckets/assign", async (c) => {
   const userId = c.get("userId") as string;
   const body = assignThreadSchema.parse(await c.req.json());
-  await queries.assignThread(
+  await bucketOps.assignThread(
     userId,
     body.gmail_thread_id,
     body.bucket_id,
@@ -231,8 +231,8 @@ apiRoutes.get("/bucket-templates/:id", async (c) => {
 
 apiRoutes.post("/bucket-templates/:id/apply", async (c) => {
   const userId = c.get("userId") as string;
-  const buckets = await queries.applyBucketTemplate(userId, c.req.param("id"));
-  return c.json(buckets, 201);
+  const result = await bucketOps.applyBucketTemplate(userId, c.req.param("id"));
+  return c.json(result, 201);
 });
 
 apiRoutes.get("/conversations", async (c) => {

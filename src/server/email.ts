@@ -1,4 +1,5 @@
 import pLimit from "p-limit";
+import * as bucketOps from "./buckets.js";
 import * as queries from "./db/queries.js";
 import { withUserTokens } from "./google/auth.js";
 import type { GmailMessage, GmailThread } from "./google/gmail.js";
@@ -128,7 +129,7 @@ export async function getThread(userId: string, gmailThreadId: string) {
 }
 
 export async function getUnbucketedThreads(userId: string) {
-  const threads = await queries.getUnbucketedThreads(userId, BATCH_SIZE);
+  const threads = await bucketOps.getUnbucketedThreads(userId);
   return { unbucketed: threads.length, threads };
 }
 

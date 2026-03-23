@@ -1,5 +1,4 @@
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
-import { z } from "zod";
 import { AppError } from "../exceptions.js";
 import { db } from "./index.js";
 import {
@@ -14,15 +13,7 @@ import {
   users,
 } from "./schema.js";
 
-const BATCH_SIZE = 25;
-
-const BucketDefinitionSchema = z.array(
-  z.object({
-    name: z.string().min(1),
-    description: z.string().min(1),
-    sort_order: z.number().int().min(0),
-  }),
-);
+// Users
 
 export async function upsertUser(email: string, name?: string, avatarUrl?: string) {
   const [row] = await db
@@ -35,6 +26,8 @@ export async function upsertUser(email: string, name?: string, avatarUrl?: strin
     .returning();
   return row;
 }
+
+// Google Tokens
 
 export async function getGoogleTokens(userId: string) {
   const [row] = await db.select().from(googleTokens).where(eq(googleTokens.user_id, userId));
@@ -62,6 +55,8 @@ export async function upsertGoogleTokens(
   return row;
 }
 
+// Bucket Templates
+
 export async function listBucketTemplates() {
   return db.select().from(bucketTemplates);
 }
@@ -71,25 +66,10 @@ export async function getBucketTemplate(id: string) {
   return row ?? null;
 }
 
-export async function applyBucketTemplate(userId: string, id: string) {
-  const template = await getBucketTemplate(id);
-  if (!template) {
-    throw new AppError(`Bucket template not found: ${id}`, 404, { userFacing: true });
-  }
-
-  const items = BucketDefinitionSchema.parse(template.buckets);
-
-  const existing = await db.select().from(buckets).where(eq(buckets.user_id, userId));
-  if (existing.length > 0) {
-    throw new AppError(
-      "Buckets already exist — delete all buckets before applying a template",
-      409,
-      {
-        userFacing: true,
-      },
-    );
-  }
-
+export async function insertBuckets(
+  userId: string,
+  items: Array<{ name: string; description: string; sort_order: number }>,
+) {
   return db
     .insert(buckets)
     .values(
@@ -103,8 +83,26 @@ export async function applyBucketTemplate(userId: string, id: string) {
     .returning();
 }
 
+// Buckets
+
+export async function getBucket(userId: string, id: string) {
+  const [row] = await db
+    .select()
+    .from(buckets)
+    .where(and(eq(buckets.id, id), eq(buckets.user_id, userId)));
+  return row ?? null;
+}
+
 export async function listBuckets(userId: string) {
   return db.select().from(buckets).where(eq(buckets.user_id, userId)).orderBy(buckets.sort_order);
+}
+
+export async function listBucketsByIds(userId: string, ids: string[]) {
+  if (ids.length === 0) return [];
+  return db
+    .select()
+    .from(buckets)
+    .where(and(inArray(buckets.id, ids), eq(buckets.user_id, userId)));
 }
 
 export async function createBucket(userId: string, name: string, description: string) {
@@ -131,6 +129,162 @@ export async function updateBucket(
 export async function deleteBucket(userId: string, id: string) {
   await db.delete(buckets).where(and(eq(buckets.id, id), eq(buckets.user_id, userId)));
 }
+
+export async function markAllForRebucket(userId: string) {
+  await db
+    .update(threadBuckets)
+    .set({ needs_rebucket: true })
+    .where(eq(threadBuckets.user_id, userId));
+}
+
+export async function listBucketsWithThreads(userId: string) {
+  const allBuckets = await db
+    .select()
+    .from(buckets)
+    .where(eq(buckets.user_id, userId))
+    .orderBy(buckets.sort_order);
+  const allThreadBuckets = await db
+    .select({
+      id: threadBuckets.id,
+      gmail_thread_id: threadBuckets.gmail_thread_id,
+      bucket_id: threadBuckets.bucket_id,
+      subject: threadBuckets.subject,
+      snippet: threadBuckets.snippet,
+      assigned_at: threadBuckets.assigned_at,
+      from_name: emailThreads.from_name,
+      from_email: emailThreads.from_email,
+      last_message_at: emailThreads.last_message_at,
+    })
+    .from(threadBuckets)
+    .leftJoin(
+      emailThreads,
+      and(
+        eq(threadBuckets.gmail_thread_id, emailThreads.gmail_thread_id),
+        eq(emailThreads.user_id, threadBuckets.user_id),
+      ),
+    )
+    .innerJoin(buckets, eq(threadBuckets.bucket_id, buckets.id))
+    .where(eq(buckets.user_id, userId))
+    .orderBy(desc(emailThreads.last_message_at));
+  return allBuckets.map((bucket) => ({
+    ...bucket,
+    threads: allThreadBuckets.filter((tb) => tb.bucket_id === bucket.id),
+  }));
+}
+
+export async function listThreadsByBucket(userId: string, bucketId: string) {
+  return db
+    .select({
+      id: threadBuckets.id,
+      gmail_thread_id: threadBuckets.gmail_thread_id,
+      bucket_id: threadBuckets.bucket_id,
+      subject: threadBuckets.subject,
+      snippet: threadBuckets.snippet,
+      needs_rebucket: threadBuckets.needs_rebucket,
+      assigned_at: threadBuckets.assigned_at,
+    })
+    .from(threadBuckets)
+    .innerJoin(buckets, eq(threadBuckets.bucket_id, buckets.id))
+    .where(and(eq(threadBuckets.bucket_id, bucketId), eq(buckets.user_id, userId)));
+}
+
+// Thread Buckets
+
+export async function upsertThreadBucket(
+  userId: string,
+  gmailThreadId: string,
+  bucketId: string,
+  subject?: string,
+  snippet?: string,
+) {
+  const [row] = await db
+    .insert(threadBuckets)
+    .values({
+      user_id: userId,
+      gmail_thread_id: gmailThreadId,
+      bucket_id: bucketId,
+      subject,
+      snippet,
+    })
+    .onConflictDoUpdate({
+      target: [threadBuckets.user_id, threadBuckets.gmail_thread_id],
+      set: { bucket_id: bucketId, subject, snippet, assigned_at: new Date() },
+    })
+    .returning();
+  return row;
+}
+
+export async function unassignThread(userId: string, gmailThreadId: string) {
+  await db
+    .delete(threadBuckets)
+    .where(
+      and(eq(threadBuckets.gmail_thread_id, gmailThreadId), eq(threadBuckets.user_id, userId)),
+    );
+}
+
+export async function upsertThreadBuckets(
+  userId: string,
+  assignments: Array<{
+    gmailThreadId: string;
+    bucketId: string;
+    subject?: string;
+    snippet?: string;
+  }>,
+) {
+  return db.transaction(async (tx) => {
+    return tx
+      .insert(threadBuckets)
+      .values(
+        assignments.map((a) => ({
+          user_id: userId,
+          gmail_thread_id: a.gmailThreadId,
+          bucket_id: a.bucketId,
+          subject: a.subject,
+          snippet: a.snippet,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [threadBuckets.user_id, threadBuckets.gmail_thread_id],
+        set: {
+          bucket_id: sql`excluded.bucket_id`,
+          subject: sql`excluded.subject`,
+          snippet: sql`excluded.snippet`,
+          assigned_at: sql`excluded.assigned_at`,
+        },
+      })
+      .returning();
+  });
+}
+
+export async function getUnbucketedThreads(userId: string, limit: number) {
+  const assigned = db
+    .select({ id: threadBuckets.gmail_thread_id })
+    .from(threadBuckets)
+    .where(eq(threadBuckets.user_id, userId));
+  return db
+    .select()
+    .from(emailThreads)
+    .where(
+      and(eq(emailThreads.user_id, userId), not(inArray(emailThreads.gmail_thread_id, assigned))),
+    )
+    .limit(limit);
+}
+
+export async function countUnbucketedThreads(userId: string) {
+  const assigned = db
+    .select({ id: threadBuckets.gmail_thread_id })
+    .from(threadBuckets)
+    .where(eq(threadBuckets.user_id, userId));
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(emailThreads)
+    .where(
+      and(eq(emailThreads.user_id, userId), not(inArray(emailThreads.gmail_thread_id, assigned))),
+    );
+  return row.count;
+}
+
+// Email Threads
 
 export async function upsertEmailThread(
   userId: string,
@@ -225,181 +379,7 @@ export async function listEmailThreadsByGmailIds(userId: string, gmailIds: strin
     .where(and(inArray(emailThreads.gmail_thread_id, gmailIds), eq(emailThreads.user_id, userId)));
 }
 
-export async function listThreadsByBucket(userId: string, bucketId: string) {
-  return db
-    .select({
-      id: threadBuckets.id,
-      gmail_thread_id: threadBuckets.gmail_thread_id,
-      bucket_id: threadBuckets.bucket_id,
-      subject: threadBuckets.subject,
-      snippet: threadBuckets.snippet,
-      needs_rebucket: threadBuckets.needs_rebucket,
-      assigned_at: threadBuckets.assigned_at,
-    })
-    .from(threadBuckets)
-    .innerJoin(buckets, eq(threadBuckets.bucket_id, buckets.id))
-    .where(and(eq(threadBuckets.bucket_id, bucketId), eq(buckets.user_id, userId)));
-}
-
-export async function assignThread(
-  userId: string,
-  gmailThreadId: string,
-  bucketId: string,
-  subject?: string,
-  snippet?: string,
-) {
-  const [bucket] = await db
-    .select({ id: buckets.id })
-    .from(buckets)
-    .where(and(eq(buckets.id, bucketId), eq(buckets.user_id, userId)));
-  if (!bucket) {
-    throw new AppError(`Bucket not found: ${bucketId}`, 404, { userFacing: true });
-  }
-  const [row] = await db
-    .insert(threadBuckets)
-    .values({
-      user_id: userId,
-      gmail_thread_id: gmailThreadId,
-      bucket_id: bucketId,
-      subject,
-      snippet,
-    })
-    .onConflictDoUpdate({
-      target: [threadBuckets.user_id, threadBuckets.gmail_thread_id],
-      set: { bucket_id: bucketId, subject, snippet, assigned_at: new Date() },
-    })
-    .returning();
-  return row;
-}
-
-export async function unassignThread(userId: string, gmailThreadId: string) {
-  await db
-    .delete(threadBuckets)
-    .where(
-      and(eq(threadBuckets.gmail_thread_id, gmailThreadId), eq(threadBuckets.user_id, userId)),
-    );
-}
-
-export async function listBucketsWithThreads(userId: string) {
-  const allBuckets = await db
-    .select()
-    .from(buckets)
-    .where(eq(buckets.user_id, userId))
-    .orderBy(buckets.sort_order);
-  const allThreadBuckets = await db
-    .select({
-      id: threadBuckets.id,
-      gmail_thread_id: threadBuckets.gmail_thread_id,
-      bucket_id: threadBuckets.bucket_id,
-      subject: threadBuckets.subject,
-      snippet: threadBuckets.snippet,
-      assigned_at: threadBuckets.assigned_at,
-      from_name: emailThreads.from_name,
-      from_email: emailThreads.from_email,
-      last_message_at: emailThreads.last_message_at,
-    })
-    .from(threadBuckets)
-    .leftJoin(
-      emailThreads,
-      and(
-        eq(threadBuckets.gmail_thread_id, emailThreads.gmail_thread_id),
-        eq(emailThreads.user_id, threadBuckets.user_id),
-      ),
-    )
-    .innerJoin(buckets, eq(threadBuckets.bucket_id, buckets.id))
-    .where(eq(buckets.user_id, userId))
-    .orderBy(desc(emailThreads.last_message_at));
-  return allBuckets.map((bucket) => ({
-    ...bucket,
-    threads: allThreadBuckets.filter((tb) => tb.bucket_id === bucket.id),
-  }));
-}
-
-export async function getUnbucketedThreads(userId: string, limit: number) {
-  const cappedLimit = Math.min(limit, BATCH_SIZE);
-  const assigned = db
-    .select({ id: threadBuckets.gmail_thread_id })
-    .from(threadBuckets)
-    .where(eq(threadBuckets.user_id, userId));
-  return db
-    .select()
-    .from(emailThreads)
-    .where(
-      and(eq(emailThreads.user_id, userId), not(inArray(emailThreads.gmail_thread_id, assigned))),
-    )
-    .limit(cappedLimit);
-}
-
-export async function countUnbucketedThreads(userId: string) {
-  const assigned = db
-    .select({ id: threadBuckets.gmail_thread_id })
-    .from(threadBuckets)
-    .where(eq(threadBuckets.user_id, userId));
-  const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(emailThreads)
-    .where(
-      and(eq(emailThreads.user_id, userId), not(inArray(emailThreads.gmail_thread_id, assigned))),
-    );
-  return row.count;
-}
-
-export async function assignThreadsBatch(
-  userId: string,
-  assignments: Array<{
-    gmailThreadId: string;
-    bucketId: string;
-    subject?: string;
-    snippet?: string;
-  }>,
-) {
-  if (assignments.length > BATCH_SIZE) {
-    throw new AppError(`Batch size ${assignments.length} exceeds limit of ${BATCH_SIZE}`, 400, {
-      userFacing: true,
-    });
-  }
-  if (assignments.length === 0) return [];
-
-  const bucketIds = [...new Set(assignments.map((a) => a.bucketId))];
-  const userBuckets = await db
-    .select({ id: buckets.id })
-    .from(buckets)
-    .where(and(inArray(buckets.id, bucketIds), eq(buckets.user_id, userId)));
-  if (userBuckets.length !== bucketIds.length) {
-    throw new AppError("One or more buckets not found", 404, { userFacing: true });
-  }
-
-  return db.transaction(async (tx) => {
-    return tx
-      .insert(threadBuckets)
-      .values(
-        assignments.map((a) => ({
-          user_id: userId,
-          gmail_thread_id: a.gmailThreadId,
-          bucket_id: a.bucketId,
-          subject: a.subject,
-          snippet: a.snippet,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: [threadBuckets.user_id, threadBuckets.gmail_thread_id],
-        set: {
-          bucket_id: sql`excluded.bucket_id`,
-          subject: sql`excluded.subject`,
-          snippet: sql`excluded.snippet`,
-          assigned_at: sql`excluded.assigned_at`,
-        },
-      })
-      .returning();
-  });
-}
-
-export async function markAllForRebucket(userId: string) {
-  await db
-    .update(threadBuckets)
-    .set({ needs_rebucket: true })
-    .where(eq(threadBuckets.user_id, userId));
-}
+// Conversations
 
 export async function listConversations(userId: string) {
   return db
