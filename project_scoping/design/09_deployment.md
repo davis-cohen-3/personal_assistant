@@ -13,7 +13,7 @@ GCP Cloud Run deployment. Containerized Node.js service + Cloud SQL Postgres. HT
 | **Project** | `double-dolphin-490920-m6` |
 | **Service** | `pa-agent` |
 | **Region** | `us-central1` |
-| **App URL** | `https://pa-agent-thgqtqf3tq-uc.a.run.app` |
+| **App URL** | `https://pa-agent-1055755006774.us-central1.run.app` |
 | **HTTPS** | Automatic (Google-managed TLS) |
 | **WebSocket** | Supported out of the box |
 | **Deploy trigger** | Manual via `gcloud run deploy` |
@@ -83,7 +83,7 @@ DATABASE_URL=<Cloud SQL connection string>
 # Google OAuth
 GOOGLE_CLIENT_ID=<from Google Cloud Console>
 GOOGLE_CLIENT_SECRET=<from Google Cloud Console>
-GOOGLE_REDIRECT_URI=https://pa-agent-thgqtqf3tq-uc.a.run.app/auth/google/callback
+GOOGLE_REDIRECT_URI=https://pa-agent-1055755006774.us-central1.run.app/auth/google/callback
 
 # Agent
 ANTHROPIC_API_KEY=<your API key>
@@ -105,7 +105,7 @@ Google OAuth tokens are stored in the `google_tokens` Postgres table (see `03_da
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials
 2. Create an OAuth 2.0 Client ID (Web application)
-3. Add authorized redirect URI: `https://pa-agent-thgqtqf3tq-uc.a.run.app/auth/google/callback`
+3. Add authorized redirect URI: `https://pa-agent-1055755006774.us-central1.run.app/auth/google/callback`
 4. Copy Client ID and Client Secret into Cloud Run env vars
 5. Enable APIs: Gmail API, Google Calendar API, Google Drive API
 
@@ -146,7 +146,7 @@ This builds the Docker image via Cloud Build, pushes to Artifact Registry, and d
 | **Backend** | `tsx watch` with live reload | `node dist/server/index.js` |
 | **HTTPS** | Not needed (localhost) | Google-managed TLS |
 | **Google tokens** | Postgres (same as prod) | Postgres |
-| **OAuth redirect** | `http://localhost:3000/auth/google/callback` | `https://pa-agent-thgqtqf3tq-uc.a.run.app/auth/google/callback` |
+| **OAuth redirect** | `http://localhost:3000/auth/google/callback` | `https://pa-agent-1055755006774.us-central1.run.app/auth/google/callback` |
 
 ---
 
