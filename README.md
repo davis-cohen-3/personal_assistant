@@ -67,8 +67,8 @@ src/
 - Node.js 20+
 - pnpm
 - PostgreSQL 16+
-- A [Google Cloud](https://console.cloud.google.com) project with OAuth 2.0 credentials and Gmail, Calendar, and Drive APIs enabled
-- An [Anthropic API key](https://console.anthropic.com)
+- A [Google Cloud] project with OAuth 2.0 credentials and Gmail, Calendar, and Drive APIs enabled
+- An [Anthropic API key]
 
 ### 1. Clone and install
 
