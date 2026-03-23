@@ -4,11 +4,12 @@
 
 | What you're testing | Type | Location | DB |
 |---------------------|------|----------|----|
-| Query functions | Integration | `tests/server/db/` | Real Postgres |
-| REST routes | Integration | `tests/server/routes/` | Real Postgres |
-| Google connectors | Unit (mocked) | `tests/server/google/` | Mocked googleapis |
-| MCP tool handlers | Integration | `tests/server/tools/` | Real Postgres |
-| React components | Component | `tests/client/` | N/A |
+| Query functions | Integration | `tests/integration/db/` | Real Postgres |
+| Google connectors | Unit (mocked) | `tests/unit/google/` | Mocked googleapis |
+| MCP tool handlers | Unit (mocked) | `tests/unit/tools.test.ts` | Mocked |
+| REST routes | Unit (mocked) | `tests/unit/routes.test.ts` | Mocked |
+| Agent / streaming | Unit (mocked) | `tests/unit/agent.test.ts` | Mocked |
+| Auth / crypto | Unit | `tests/unit/auth.test.ts`, `tests/unit/crypto.test.ts` | N/A |
 
 **Rule of thumb:** If it touches the database, use integration tests with real DB. If it calls external APIs, mock them.
 
@@ -38,7 +39,7 @@ describe('getBuckets', () => {
 
 ## Route Tests
 
-Use Hono test client. Real DB, HTTP layer tested.
+Mock queries and connectors. Test HTTP layer (status codes, validation, response shape).
 
 ```typescript
 describe('GET /api/buckets', () => {
@@ -65,7 +66,7 @@ describe('GET /api/buckets', () => {
 Mock the googleapis SDK. Test our wrapper logic.
 
 ```typescript
-jest.mock('googleapis');
+vi.mock('googleapis');
 
 describe('listThreads', () => {
   it('passes query and maxResults to Gmail API', async () => {
@@ -99,14 +100,6 @@ it('throws ValidationError for empty name', async () => {
 });
 ```
 
-## Key Fixtures
-
-| Fixture | What it does |
-|---------|-------------|
-| `cleanDatabase` | Truncates all tables — use in every integration test |
-| `testSessionCookie` | Valid JWT for authenticated requests |
-| `testBucket` | Pre-created bucket for tests that need one |
-
 ## Anti-Patterns
 
 ```typescript
@@ -117,7 +110,7 @@ const bucket = await getBucket('invalid') ?? testBucket;
 await expect(getBucket('invalid')).rejects.toThrow(NotFoundError);
 
 // ❌ Mocking DB in integration tests
-jest.mock('../db/queries');
+vi.mock('../db/queries');
 
 // ✅ Integration tests use real DB
 const result = await getBuckets();
@@ -133,7 +126,7 @@ expect(buckets[0].name).toBe('Important');
 ## Running Tests
 
 ```bash
-npm test                        # All tests
-npm test -- --grep "buckets"    # Pattern match
-npm test -- tests/server/db/    # Specific directory
+pnpm test                                # All tests
+pnpm test -- --grep "buckets"            # Pattern match
+pnpm test -- tests/integration/db/       # Specific directory
 ```

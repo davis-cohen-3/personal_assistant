@@ -7,7 +7,7 @@ Single-user AI assistant for Google Workspace (Gmail, Calendar, Drive). Claude A
 ## Build & Test
 
 ```bash
-./run_dev.sh                    # Start Postgres, migrations, backend + frontend
+./scripts/run_dev.sh            # Run migrations, start backend + frontend (watch mode)
 pnpm run build                  # Production build (vite + tsc)
 pnpm run start                  # Production start
 pnpm test                       # Run all tests
@@ -56,7 +56,7 @@ Both paths share the same `google/*` connectors. Agent writes data via tools, fr
 
 ## Gotchas
 
-**Hooks block these** (won't let you write):
+**Avoid these patterns** (code review will reject them):
 ```typescript
 const value: any = ...                    // ❌ any type
 const x = foo as any;                     // ❌ as any assertion
@@ -99,7 +99,7 @@ const v = config.get('key') ?? 'default'; // ❌ Fallback defaults
 | `agent_docs/code-quality.md` | **Read before writing any code** |
 | `agent_docs/backend-patterns.md` | Routes, queries, connectors, tools |
 | `agent_docs/testing.md` | How to write tests (which type, fixtures, patterns) |
-| `project/design/` | Full system spec and architecture |
+| `project_scoping/design/` | Full system spec and architecture |
 
 ## Current Work
 

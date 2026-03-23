@@ -137,7 +137,7 @@ console.info('Email sent', { threadId, to });
 console.warn('Validation failed', { issues: err.issues });
 console.error('Failed to send email', { threadId, error });
 
-// WRONG — console.log or console.debug (blocked by hook)
+// WRONG — console.log or console.debug (not allowed)
 console.log('bucket created');
 console.debug(data);
 ```
@@ -145,4 +145,4 @@ console.debug(data);
 - `console.info` — normal operational events (requests, tool calls, completions)
 - `console.warn` — unexpected but recoverable situations
 - `console.error` — errors and failures
-- Avoid `console.log` / `console.debug` — blocked by the quality hook
+- Avoid `console.log` / `console.debug` — use `console.info` / `console.warn` / `console.error` instead

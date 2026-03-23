@@ -95,6 +95,9 @@ const BASE_OPTIONS = {
   includePartialMessages: true,
   maxTurns: 30,
   maxBudgetUsd: 5.0,
+  env: Object.fromEntries(
+    Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+  ),
 };
 
 const TOOL_DISPLAY_NAMES: Record<string, string> = {

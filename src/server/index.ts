@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import type { Server } from "node:http";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -93,8 +92,10 @@ app.route("/api", apiRoutes);
 // SPA catch-all — must be last
 app.get("*", serveStatic({ path: "./dist/client/index.html" }));
 
-const server = serve({ fetch: app.fetch, port: 3000 }, (info) => {
-  console.info(`Server listening on http://localhost:${info.port}`);
+const port = Number(process.env.PORT) || 3000;
+
+const server = serve({ fetch: app.fetch, port }, (info) => {
+  console.info(`Server listening on port ${info.port}`);
 }) as Server;
 
 injectWebSocket(server);
@@ -107,18 +108,8 @@ function shutdown() {
 }
 
 server.on("error", (err: NodeJS.ErrnoException) => {
-  if (err.code === "EADDRINUSE") {
-    console.warn("Port 3000 in use — killing existing process");
-    try {
-      execSync("lsof -ti:3000 | xargs kill -9 2>/dev/null", { stdio: "ignore" });
-    } catch {
-      // No process found or already dead
-    }
-    setTimeout(() => server.listen(3000), 500);
-  } else {
-    console.error("Server error", { error: err });
-    process.exit(1);
-  }
+  console.error("Server error", { error: err });
+  process.exit(1);
 });
 
 process.on("SIGTERM", shutdown);
