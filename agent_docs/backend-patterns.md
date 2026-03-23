@@ -3,13 +3,15 @@
 ## Layer Architecture
 
 ```
-Routes (routes.ts)  →  Query Functions (queries.ts)  →  PostgreSQL (Drizzle)
+Routes (routes.ts)  →  Service Modules (buckets.ts, email.ts)  →  Query Functions (queries.ts)  →  PostgreSQL (Drizzle)
                               ↑
 MCP Tools (tools.ts) ─┤
                       └→  Google Connectors (google/*.ts)
 ```
 
-Routes and MCP tools both delegate to the same queries and connectors. Never skip layers.
+Routes and MCP tools both delegate to the same service modules, queries, and connectors. Never skip layers.
+
+**Service modules** (`buckets.ts`, `email.ts`) contain business logic that coordinates multiple query calls. `queries.ts` stays as pure DB operations. Routes and tools call service modules — not queries directly — for anything with business logic.
 
 ## Drizzle ORM Patterns
 
@@ -67,7 +69,7 @@ export async function updateBucket(
 
 ## REST Route Patterns
 
-Routes are thin HTTP handlers. They extract `userId`, validate input with Zod, call queries/connectors, and return JSON:
+Routes are thin HTTP handlers. They extract `userId`, validate input with Zod, call service modules/queries/connectors, and return JSON:
 
 ```typescript
 apiRoutes.get('/buckets', async (c) => {
@@ -79,8 +81,8 @@ apiRoutes.get('/buckets', async (c) => {
 apiRoutes.post('/buckets', async (c) => {
   const userId = c.get('userId') as string;
   const body = createBucketSchema.parse(await c.req.json());
-  const bucket = await queries.createBucket(userId, body.name, body.description);
-  return c.json(bucket, 201);
+  const bucket = await bucketOps.createBucket(userId, body.name, body.description);
+  return c.json({ ...bucket, rebucket_required: true }, 201);
 });
 ```
 
@@ -203,9 +205,10 @@ Non-`userFacing` errors return a generic message to the client; details stay in 
 
 ## Rules Summary
 
-- Routes contain NO business logic — delegate to query functions
+- Routes contain NO business logic — delegate to service modules or query functions
 - Routes NEVER access `db` directly — use queries.ts
-- MCP tools and REST routes share the same queries and connectors
+- Business logic that coordinates multiple queries lives in service modules (`buckets.ts`, `email.ts`)
+- MCP tools and REST routes share the same service modules, queries, and connectors
 - Google connectors have NO business logic
 - All queries scope by `userId` — multi-tenancy is enforced at the query layer
 - All methods are async

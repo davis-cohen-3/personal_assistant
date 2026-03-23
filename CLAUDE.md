@@ -41,6 +41,7 @@ Both paths share the same `google/*` connectors. Agent writes data via tools, fr
 | Agent Config | `src/server/agent.ts` |
 | MCP Tools | `src/server/tools.ts` |
 | REST Routes | `src/server/routes.ts` |
+| Service Modules | `src/server/buckets.ts`, `src/server/email.ts` |
 | Google Connectors | `src/server/google/` |
 | Database | `src/server/db/` |
 | Frontend | `src/client/` |
@@ -65,7 +66,7 @@ try { await doThing(); } catch {}         // ❌ Swallowed exception
 const v = config.get('key') ?? 'default'; // ❌ Fallback defaults
 ```
 
-**IMPORTANT:** No fallback returns in catch blocks. No business logic in routes — delegate to query functions. Routes and MCP tools share the same queries and connectors. Full reference in `agent_docs/code-quality.md`.
+**IMPORTANT:** No fallback returns in catch blocks. No business logic in routes — delegate to service modules (`buckets.ts`, `email.ts`) or query functions. Routes and MCP tools share the same service modules, queries, and connectors. Full reference in `agent_docs/code-quality.md`.
 
 ## Workflow
 
@@ -84,11 +85,12 @@ const v = config.get('key') ?? 'default'; // ❌ Fallback defaults
 
 1. **Schema** — Add table/columns in `src/server/db/schema.ts` (Drizzle)
 2. **Queries** — Add CRUD functions in `src/server/db/queries.ts`
-3. **MCP Tool** — If agent needs access, add tool in `src/server/tools.ts`
-4. **REST Route** — If direct UI needs access, add endpoint in `src/server/routes.ts`
-5. **Frontend Component** — React component fetching from REST API
-6. **Tests** — Integration tests for queries + routes, component tests if complex
-7. **Migration** — `npx drizzle-kit generate` then `npx drizzle-kit migrate`
+3. **Service Module** — If business logic coordinates multiple queries, add to `buckets.ts` / `email.ts` (or new module)
+4. **MCP Tool** — If agent needs access, add tool in `src/server/tools.ts`
+5. **REST Route** — If direct UI needs access, add endpoint in `src/server/routes.ts`
+6. **Frontend Component** — React component fetching from REST API
+7. **Tests** — Integration tests for queries + routes, component tests if complex
+8. **Migration** — `npx drizzle-kit generate` then `npx drizzle-kit migrate`
 
 ## Documentation
 

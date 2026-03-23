@@ -37,6 +37,7 @@ src/
 │   ├── tools.ts           # MCP tool definitions (5 tools)
 │   ├── routes.ts          # REST API (thin routing layer)
 │   ├── auth.ts            # JWT sessions, CSRF
+│   ├── buckets.ts         # Bucket business logic (create, assign, apply template)
 │   ├── email.ts           # Inbox sync, search, send/reply
 │   ├── crypto.ts          # AES-256-GCM token encryption
 │   ├── db/
