@@ -303,7 +303,7 @@ Approval is chat-based — no special buttons or message types. The agent descri
 │                     Disk (file-based state)                       │
 │                                                                  │
 │  ~/.claude/projects/<cwd>/<session-id>.jsonl                     │
-│  (Agent SDK session files — ephemeral on Railway, used for       │
+│  (Agent SDK session files — ephemeral on GCP Cloud Run, used for       │
 │   session resume. Postgres chat_messages is the durable record)  │
 │                                                                  │
 │  .claude/skills/*.md                                             │

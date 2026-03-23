@@ -64,9 +64,9 @@ Full spec at `implementation_phases/multi-tenancy/spec.md`. Summary:
 
 ---
 
-## 7. Deploy to Railway (~30 min)
+## 7. Deploy to GCP Cloud Run (~30 min)
 
-- Configure Railway project with Postgres + web service
+- Configure GCP Cloud Run project with Postgres + web service
 - Set env vars (DATABASE_URL, JWT_SECRET, CSRF_SECRET, GOOGLE_*, ANTHROPIC_API_KEY, ENCRYPTION_KEY)
 - Update Google OAuth redirect URI for production domain
 - Verify build + deploy succeeds
@@ -96,5 +96,5 @@ Full spec at `implementation_phases/multi-tenancy/spec.md`. Summary:
 **Then evaluate:** multi-tenancy (required for reviewers to access)
 
 **Last:**
-5. Deploy to Railway
+5. Deploy to GCP Cloud Run
 6. README.md

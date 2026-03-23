@@ -10,9 +10,9 @@ Issues found during review of `project/design/` docs (01–10 + decisions_log). 
 
 **Location:** `03_data_layer.md` — `google_tokens` table; `04_backend.md` — `persistTokens()`
 
-`google_tokens` stores `access_token` and `refresh_token` as plain `text` columns. If the database is compromised (SQL injection, backup leak, Railway dashboard access by a third party), an attacker gets full Google API access to Gmail, Calendar, and Drive.
+`google_tokens` stores `access_token` and `refresh_token` as plain `text` columns. If the database is compromised (SQL injection, backup leak, GCP Cloud Console access by a third party), an attacker gets full Google API access to Gmail, Calendar, and Drive.
 
-**Fix:** AES-256-GCM envelope encryption using Node's built-in `crypto` module. Encrypt before insert, decrypt on read. No extra dependency. Add `ENCRYPTION_KEY` to `.env.example` and Railway env vars.
+**Fix:** AES-256-GCM envelope encryption using Node's built-in `crypto` module. Encrypt before insert, decrypt on read. No extra dependency. Add `ENCRYPTION_KEY` to `.env.example` and GCP Cloud Run env vars.
 
 **Decision:** Implement for v1. Use Node built-in `crypto` (no extra dep).
 
@@ -145,7 +145,7 @@ Worst case is a few extra API calls per sync. History ID-based incremental sync 
 
 **Location:** `04_backend.md` — server setup in `index.ts`
 
-The Hono server doesn't handle `SIGTERM`. On Railway redeploy, active WebSocket connections and in-flight agent responses get killed abruptly.
+The Hono server doesn't handle `SIGTERM`. On Cloud Run redeploy, active WebSocket connections and in-flight agent responses get killed abruptly.
 
 **Fix:** `SIGTERM` handler that closes the server and force-exits after 10s.
 
@@ -158,7 +158,7 @@ The Hono server doesn't handle `SIGTERM`. On Railway redeploy, active WebSocket 
 
 ### 12. Health check has no query timeout — LOW ⏭️ SKIPPED
 
-**Decision:** Skip for v1. Railway's own probe timeout is sufficient.
+**Decision:** Skip for v1. Cloud Run's own probe timeout is sufficient.
 
 ---
 

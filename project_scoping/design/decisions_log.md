@@ -49,7 +49,7 @@ All architectural and design decisions with rationale. Coding agents should trea
 | Email orchestration layer (`email.ts`) | `sync_email` tool delegates to `email.ts`, which coordinates between `gmail.ts` (Google API) and `queries.ts` (DB). Keeps tools thin, keeps `gmail.ts` free of DB logic, keeps `queries.ts` free of Gmail logic. REST routes also use `email.ts` for email reads. All email writes also route through `email.ts` (thin pass-throughs to `gmail.ts`) so tools and routes have a single import path for all email operations. |
 | Calendar/Drive routes call connectors directly (no orchestration layer) | Unlike email, calendar and drive have no local cache — all data is fetched live from Google APIs. An orchestration layer would be a pass-through with no added value. If caching is added later, introduce a `calendar.ts` orchestration layer at that point. |
 | `sync` vs `search` separation in `sync_email` | `sync` is bulk inbox refresh (diff-based, fetches only new/changed threads, returns stats). `search` is ad-hoc query (finds specific threads, returns results). Both persist to local cache. Bucketing uses `sync` → `get_unbucketed` loop. Meeting prep / draft reply use `search`. |
-| Google tokens in Postgres, not filesystem | Survives Railway's ephemeral filesystem across deploys. `google/auth.ts` upserts on every token refresh. |
+| Google tokens in Postgres, not filesystem | Survives Cloud Run's ephemeral filesystem across deploys. `google/auth.ts` upserts on every token refresh. |
 | WebSocket auth via session cookie | Same-origin cookie validated on connection upgrade. Same cookie used for REST — unified auth model. |
 | No preferences system in v1 | Useful but not essential for core loop. Deferred. |
 | No heartbeat/background cron in v1 | Requires infra complexity. User-initiated workflows are sufficient for v1. |
@@ -63,7 +63,7 @@ All architectural and design decisions with rationale. Coding agents should trea
 
 | Decision | Rationale |
 |---|---|
-| Local Homebrew Postgres instead of Docker | Davis uses Homebrew Postgres, not Docker. `DATABASE_URL=postgresql://daviscohen@localhost:5432/pa_agent` (no password). `tests/setup.ts` defaults to this URL so `pnpm test` works without manual env setup. `docker-compose.yml` kept for future reference / Railway deploy context. |
+| Local Homebrew Postgres instead of Docker | Davis uses Homebrew Postgres, not Docker. `DATABASE_URL=postgresql://daviscohen@localhost:5432/pa_agent` (no password). `tests/setup.ts` defaults to this URL so `pnpm test` works without manual env setup. `docker-compose.yml` kept for future reference / GCP Cloud Run deploy context. |
 | `skipLibCheck: true` added to tsconfig.server.json | `drizzle-orm@0.38` ships broken type declarations for mysql/sqlite/singlestore adapters. These errors appear during `tsc` even though we only use the pg adapter. `skipLibCheck` is the standard fix for third-party declaration errors outside our control. |
 | Migration meta files excluded from biome | Added `!src/server/db/migrations/**` to biome `includes`. Drizzle generates `_journal.json` and snapshot JSON that don't match biome's formatter expectations. These are auto-generated files not owned by us. |
 | Seed data embedded in initial migration (not a separate file) | The plan called for a "seed migration" as a separate file, but that risks numbering collision with future `drizzle-kit generate` output. Embedding both the trigger and seed SQL at the end of the initial migration is simpler and collision-free. |
@@ -79,7 +79,7 @@ All architectural and design decisions with rationale. Coding agents should trea
 | Session cookie `secure` conditional on NODE_ENV | `secure: true` blocks cookies over HTTP in local dev. Conditional flag allows localhost development while keeping production secure. |
 | Parallel Gmail thread fetching (p-limit, concurrency 5) | Sequential fetches in syncInbox made bulk sync unacceptably slow (~4s per thread). Parallel with concurrency limit respects Gmail rate limits while cutting sync time ~5x. |
 | WebSocket messages validated with Zod | Malformed JSON or unexpected message types crashed the handler. Zod discriminated union + try-catch provides safe parsing. |
-| Graceful shutdown on SIGTERM | Railway sends SIGTERM on redeploy. Without handling it, active WebSocket connections and in-flight agent responses are killed mid-stream. |
+| Graceful shutdown on SIGTERM | Cloud Run sends SIGTERM on redeploy. Without handling it, active WebSocket connections and in-flight agent responses are killed mid-stream. |
 
 ## Chat Persistence
 
@@ -88,7 +88,7 @@ All architectural and design decisions with rationale. Coding agents should trea
 | Postgres for message history, SDK for agent context | Two different purposes: Postgres gives durable UI display history that survives redeploys. SDK session gives agent working memory with compaction. Neither replaces the other. |
 | `conversations` + `chat_messages` tables, no user_id | Consistent with single-user model. Conversations own messages via FK cascade. |
 | SDK session ID stored on conversation row | Enables resume after disconnect. Single nullable column — null means session was lost. |
-| Accept context loss on Railway redeploy | SDK session files are ephemeral on Railway. Rather than syncing SDK state to Postgres (complex, fragile), accept that agent context resets on redeploy. User sees full history in UI; agent starts fresh. |
+| Accept context loss on Cloud Run redeploy | SDK session files are ephemeral on GCP Cloud Run. Rather than syncing SDK state to Postgres (complex, fragile), accept that agent context resets on redeploy. User sees full history in UI; agent starts fresh. |
 | Auto-title from first user message (truncated to 80 chars) | Simple, immediate, no LLM call needed. Good enough for v1. Can upgrade to LLM-generated titles later. |
 | conversationId as WebSocket query param | Simpler than a handshake message. Client creates conversation via REST first, then connects WebSocket with the ID. |
 | No search, folders, or archiving for v1 | Keep it simple. List of conversations sorted by recency is sufficient for a single user. |

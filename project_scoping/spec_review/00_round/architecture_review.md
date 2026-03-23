@@ -156,13 +156,13 @@ The `buckets` tool handler calls `queries.markAllForRebucket()` after `createBuc
 
 ---
 
-### IMP-017: SDK session resume on Railway ephemeral filesystem
+### IMP-017: SDK session resume on GCP Cloud Run ephemeral filesystem
 
 **Files:** `04_backend.md`, `09_deployment.md`
 
 **Status: OPEN** — Needs verification during implementation.
 
-Session files are lost on every Railway redeploy and scale-to-zero. The fallback (start fresh when resume fails) is correct, but it depends on the SDK's behavior when `resume` references a nonexistent session. The new `streamQuery()` function passes `resume: sessionId` as an option to `query()` — verify that this gracefully handles missing session files.
+Session files are lost on every Cloud Run redeploy and scale-to-zero. The fallback (start fresh when resume fails) is correct, but it depends on the SDK's behavior when `resume` references a nonexistent session. The new `streamQuery()` function passes `resume: sessionId` as an option to `query()` — verify that this gracefully handles missing session files.
 
 ---
 

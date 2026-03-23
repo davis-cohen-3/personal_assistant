@@ -25,7 +25,7 @@ Fixed critical WebSocket lifecycle bugs that prevented users from sending follow
 ## Open Questions
 
 - Root cause of 1005 WebSocket closes still unknown — socket drops after agent response, user sees "Connection lost" banner and clicks Reconnect. Functional but not ideal.
-- May need server-side keepalive if the drops are caused by idle timeouts in production (Railway proxy, etc.)
+- May need server-side keepalive if the drops are caused by idle timeouts in production (Cloud Run proxy, etc.)
 
 ## Next Steps
 

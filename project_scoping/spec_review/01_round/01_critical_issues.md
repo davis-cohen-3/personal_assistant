@@ -68,7 +68,7 @@ All 5 originally unverified APIs confirmed:
 4. `Agent` tool + `AgentDefinition` with `model: "haiku"` — confirmed
 5. Session files at `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` — confirmed
 
-Railway fallback documented: fall back to `createSession()` when session file missing.
+GCP Cloud Run fallback documented: fall back to `createSession()` when session file missing.
 
 ---
 

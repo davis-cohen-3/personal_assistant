@@ -40,5 +40,5 @@ Completed comprehensive test review across all 11 test files and 16 source files
 - [ ] Phase #4: Codebase cleanup (unused imports, dead code, console.log/any checks, error handling consistency)
 - [ ] Phase #5: Smoke test
 - [ ] Phase #6: Multi-tenancy (required for reviewers)
-- [ ] Phase #7: Deploy to Railway
+- [ ] Phase #7: Deploy to GCP Cloud Run
 - [ ] Phase #8: README.md

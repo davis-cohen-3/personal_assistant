@@ -38,5 +38,5 @@ Evaluated the multi-tenancy design (explicit userId parameter threading) and con
 ## Next Steps
 
 - [ ] Commit all multi-tenancy changes (sessions 001 + 002)
-- [ ] Deploy migration to Railway (apply 0001 + 0002 in sequence)
+- [ ] Deploy migration to GCP Cloud Run (apply 0001 + 0002 in sequence)
 - [ ] Verify production OAuth flow works with the new per-call OAuth2Client

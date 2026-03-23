@@ -34,7 +34,7 @@ export const bucketTemplates = pgTable('bucket_templates', {
 
 // --- Google Tokens ---
 // Single row — stores OAuth tokens for the one app user.
-// Persisted in Postgres so tokens survive Railway's ephemeral filesystem.
+// Persisted in Postgres so tokens survive Cloud Run's ephemeral filesystem.
 // Uses a fixed text PK ('primary') so upsert always targets the same row.
 export const googleTokens = pgTable('google_tokens', {
   id: text('id').primaryKey().$default(() => 'primary'),

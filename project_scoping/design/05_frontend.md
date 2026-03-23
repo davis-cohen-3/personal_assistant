@@ -350,7 +350,7 @@ Connection lifecycle:
 - Reconnect with exponential backoff on unexpected disconnect
 - Session cookie authenticates the WebSocket upgrade (same-origin)
 - On disconnect, show a "Connection lost" banner in the chat panel with a Reconnect button
-- On reconnect after Railway scale-to-zero: SDK session may be lost, but message history is loaded from Postgres. Agent starts with fresh context while UI shows full message history
+- On reconnect after GCP Cloud Run scale-to-zero: SDK session may be lost, but message history is loaded from Postgres. Agent starts with fresh context while UI shows full message history
 - If any REST call returns 401 (session expired), close the WebSocket and redirect to `/auth/google` for re-authentication
 
 ---

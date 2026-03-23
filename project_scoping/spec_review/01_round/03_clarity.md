@@ -182,7 +182,7 @@ Diagram 1 shows two separate `google/* connectors` boxes, suggesting two instanc
 
 ### CLARITY-024: Build Command — Migration Rollback Risk
 
-Railway runs `pnpm run build && pnpm drizzle-kit migrate`. If build fails after migrations ran, schema changes are applied to production with no rollback.
+GCP Cloud Run runs `pnpm run build && pnpm drizzle-kit migrate`. If build fails after migrations ran, schema changes are applied to production with no rollback.
 
 **Fix:** Move migrations to the start command, or document that migrations are append-only.
 
@@ -190,7 +190,7 @@ Railway runs `pnpm run build && pnpm drizzle-kit migrate`. If build fails after 
 
 ### CLARITY-025: Scale-to-Zero vs WebSocket
 
-Does Railway consider an open WebSocket as "activity" that prevents sleep? Or does it sleep after 5 min regardless?
+Does GCP Cloud Run consider an open WebSocket as "activity" that prevents sleep? Or does it sleep after 5 min regardless?
 
 **Fix:** Clarify the exact trigger and document a keep-alive ping if needed.
 

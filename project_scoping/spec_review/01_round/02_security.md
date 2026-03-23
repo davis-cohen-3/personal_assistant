@@ -112,7 +112,7 @@ Session files at `~/.claude/projects/<cwd>/<session-id>.jsonl` contain email con
 
 ### SEC-012: No Rate Limiting on Auth Endpoints
 
-No brute-force protection on `/auth/status` or `/auth/google/callback`. For a single-user app on a non-advertised Railway subdomain, actual risk is very low.
+No brute-force protection on `/auth/status` or `/auth/google/callback`. For a single-user app on a non-advertised Cloud Run URL, actual risk is very low.
 
 **Fix:** Acceptable for v1. Consider `hono-rate-limiter` if the URL becomes broadly known.
 

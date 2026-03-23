@@ -38,7 +38,7 @@ New `src/server/email.ts` orchestrates between `gmail.ts` and `queries.ts`. Tool
 
 ### ~~7. Missing `logger` module~~ ✅ RESOLVED
 
-Decided to use `console.error`/`console.warn` directly for v1 instead of a custom logger. Removed all `import { logger }` references from 04_backend.md, updated code-quality.md and CLAUDE.md to reflect the new convention. Railway captures stdout/stderr natively — no library needed for a single-user app.
+Decided to use `console.error`/`console.warn` directly for v1 instead of a custom logger. Removed all `import { logger }` references from 04_backend.md, updated code-quality.md and CLAUDE.md to reflect the new convention. GCP Cloud Run captures stdout/stderr natively — no library needed for a single-user app.
 
 ---
 
@@ -212,13 +212,13 @@ Two unique indexes on overlapping columns can cause ON CONFLICT errors in Drizzl
 
 ---
 
-### ~~25. No migration step in Railway deploy pipeline~~ ✅ RESOLVED
+### ~~25. No migration step in GCP Cloud Run deploy pipeline~~ ✅ RESOLVED
 
 **Doc:** 09_deployment.md
 
-Railway start command is `node dist/server/index.js` with no migration step. Schema changes after initial deploy won't be applied.
+GCP Cloud Run start command is `node dist/server/index.js` with no migration step. Schema changes after initial deploy won't be applied.
 
-**Resolution:** Added `&& pnpm drizzle-kit migrate` to the Railway build command in 09_deployment.md. Migrations run after build, before the new version starts.
+**Resolution:** Added `&& pnpm drizzle-kit migrate` to the GCP Cloud Run build command in 09_deployment.md. Migrations run after build, before the new version starts.
 
 ---
 

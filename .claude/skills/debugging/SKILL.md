@@ -77,7 +77,7 @@ Error: connect ECONNREFUSED
 Error: Missing required env: ANTHROPIC_API_KEY
 ```
 - Check .env file exists and variable is set
-- Check Railway dashboard for production
+- Check GCP Cloud Console for production
 
 ### Authentication Errors
 
@@ -113,7 +113,7 @@ WebSocket connection closed unexpectedly
 ```
 - Check agent.ts for unhandled errors
 - Check reconnection logic in frontend
-- Check Railway timeout settings
+- Check GCP Cloud Run timeout settings
 
 ## Debugging Tests
 

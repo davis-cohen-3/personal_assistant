@@ -130,7 +130,7 @@ return c.json({ error: 'Failed to fetch threads' }, 500);
 
 ## Logging
 
-Use `console.info`, `console.warn`, and `console.error` for server-side logging. Railway captures stdout/stderr natively.
+Use `console.info`, `console.warn`, and `console.error` for server-side logging. GCP Cloud Run captures stdout/stderr natively.
 
 ```typescript
 // CORRECT — structured context via second arg

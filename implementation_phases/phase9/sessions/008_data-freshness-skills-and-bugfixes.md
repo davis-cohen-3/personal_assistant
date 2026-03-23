@@ -41,5 +41,5 @@ Implemented data freshness polling (5-min intervals for Gmail sync and calendar)
 - [ ] Evaluate multi-tenancy (required for reviewer access)
 - [ ] Test review + codebase cleanup
 - [ ] Smoke test end-to-end flow
-- [ ] Deploy to Railway
+- [ ] Deploy to GCP Cloud Run
 - [ ] README.md

@@ -62,7 +62,7 @@ Inconsistency within the `email.ts` orchestration layer itself. Not a layer boun
 
 ### ARCH-006: SDK Session Resume Failure Path Unspecified
 
-`conversations.sdk_session_id` stores the session file path. On Railway redeploy, session files are lost. The design says "attempt resume, fall back to fresh session" but doesn't specify: what error does the SDK throw when a session file is missing? How does `streamQuery` recover?
+`conversations.sdk_session_id` stores the session file path. On Cloud Run redeploy, session files are lost. The design says "attempt resume, fall back to fresh session" but doesn't specify: what error does the SDK throw when a session file is missing? How does `streamQuery` recover?
 
 **Fix:** Specify the error-handling contract for failed resume in `agent.ts`.
 

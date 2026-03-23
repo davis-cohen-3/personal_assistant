@@ -1,6 +1,6 @@
 # Feasibility Review
 
-SDK constraints, Google API limits, Railway deployment, and implementation complexity.
+SDK constraints, Google API limits, GCP Cloud Run deployment, and implementation complexity.
 
 ---
 
@@ -14,11 +14,11 @@ The entire `agent.ts` is built on assumed SDK APIs: `query()` as async generator
 
 ---
 
-### FEAS-002: SDK Session Files on Railway's Ephemeral Filesystem
+### FEAS-002: SDK Session Files on GCP Cloud Run's Ephemeral Filesystem
 
-Session files live at `~/.claude/projects/<cwd>/<session-id>.jsonl`. Railway's filesystem is ephemeral — lost on every deploy. The design's "attempt resume, fall back to fresh" flow works only within a single Railway instance lifetime. If the SDK cannot write to its target path at all, it may throw on startup.
+Session files live at `~/.claude/projects/<cwd>/<session-id>.jsonl`. Railway's filesystem is ephemeral — lost on every deploy. The design's "attempt resume, fall back to fresh" flow works only within a single GCP Cloud Run instance lifetime. If the SDK cannot write to its target path at all, it may throw on startup.
 
-**Fix:** Determine the SDK's session storage path. If configurable, point to `/tmp`. If not, accept that resume never works on Railway.
+**Fix:** Determine the SDK's session storage path. If configurable, point to `/tmp`. If not, accept that resume never works on GCP Cloud Run.
 
 ---
 

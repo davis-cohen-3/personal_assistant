@@ -349,4 +349,4 @@ Server-specific config used by the build script (`tsc --project tsconfig.server.
 
 ## Deployment
 
-See `09_deployment.md` for full deployment and DevOps details. Summary: Railway (Hobby plan), scale-to-zero, platform-managed Postgres and TLS.
+See `09_deployment.md` for full deployment and DevOps details. Summary: GCP Cloud Run, scale-to-zero, platform-managed Postgres and TLS.

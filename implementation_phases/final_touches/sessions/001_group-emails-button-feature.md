@@ -36,4 +36,4 @@ Implemented a "Group emails" button that lets users classify their inbox without
 - [ ] Codebase cleanup (plan item #4)
 - [ ] Smoke test end-to-end (plan item #5)
 - [ ] Multi-tenancy (plan item #6 — required for reviewers)
-- [ ] Deploy to Railway + README
+- [ ] Deploy to GCP Cloud Run + README

@@ -92,7 +92,7 @@ Tools are referenced as `mcp__{serverName}__{toolName}`:
 The Agent SDK stores sessions as `.jsonl` files on disk (`~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`), where `<encoded-cwd>` replaces non-alphanumeric chars with `-`. Each conversation maps to one SDK session via `conversations.sdk_session_id` in Postgres.
 
 - **Resume**: When a WebSocket connects for an existing conversation, the backend passes `resume: sessionId` in `query()` options to restore the SDK session with its full context
-- **Fresh start**: If the session file is missing (Railway redeploy, scale-to-zero), `query()` is called without `resume` to start a fresh SDK session. The conversation's `sdk_session_id` is updated in Postgres. Past messages remain visible in the UI from Postgres, but the agent has no memory of prior context. **IMPORTANT:** If the session file is missing, do NOT pass the stale ID to `resume` — the SDK throws immediately with a UUID validation error (IMP-017). Wrap the `query()` call in try/catch and retry without `resume` on error.
+- **Fresh start**: If the session file is missing (Cloud Run redeploy, scale-to-zero), `query()` is called without `resume` to start a fresh SDK session. The conversation's `sdk_session_id` is updated in Postgres. Past messages remain visible in the UI from Postgres, but the agent has no memory of prior context. **IMPORTANT:** If the session file is missing, do NOT pass the stale ID to `resume` — the SDK throws immediately with a UUID validation error (IMP-017). Wrap the `query()` call in try/catch and retry without `resume` on error.
 - **In-memory option**: Pass `persistSession: false` to skip disk writes (not used in production, but useful for testing)
 
 ### Auto-Compaction
@@ -122,7 +122,7 @@ When compacting conversation history, always preserve:
 | WebSocket connects to existing conversation | `query({ prompt, options: { ...opts, resume: sessionId } })`. If session ID is invalid/missing, SDK throws immediately — catch and retry without `resume` |
 | WebSocket disconnects | No cleanup needed — session file preserved on disk for future resume |
 | New user message on existing session | `query({ prompt: nextMessage, options: { ...opts, resume: sessionId } })` |
-| Railway redeploy / scale-to-zero | SDK session files lost. Next connection starts fresh session |
+| Cloud Run redeploy / scale-to-zero | SDK session files lost. Next connection starts fresh session |
 | SDK auto-compacts | Internal to SDK. Postgres messages unaffected |
 
 ---

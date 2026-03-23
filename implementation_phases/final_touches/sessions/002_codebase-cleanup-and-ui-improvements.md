@@ -47,5 +47,5 @@ Committed and pushed all pending changes from prior session. Ran a full codebase
 - [ ] Commit UI improvements
 - [ ] Multi-tenancy integration (parallel agent — check if complete)
 - [ ] Smoke test end-to-end
-- [ ] Deploy to Railway
+- [ ] Deploy to GCP Cloud Run
 - [ ] Write README

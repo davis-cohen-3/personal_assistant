@@ -1,6 +1,6 @@
 # Personal Assistant Agent
 
-Single-user AI assistant for Google Workspace (Gmail, Calendar, Drive). Claude Agent SDK + Hono backend, React frontend, Postgres persistence. Deployed on Railway.
+Single-user AI assistant for Google Workspace (Gmail, Calendar, Drive). Claude Agent SDK + Hono backend, React frontend, Postgres persistence. Deployed on GCP Cloud Run.
 
 **Before writing any code:** Read the relevant source files. Verify method names, signatures, and types exist before calling them. Do not assume patterns — search for how existing code does it and follow that. When a task is ambiguous, ask or check specs before guessing.
 

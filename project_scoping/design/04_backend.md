@@ -116,7 +116,7 @@ app.use('*', async (c, next) => {
   c.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; img-src 'self' data:; frame-src 'none'; object-src 'none'");
 });
 
-// Health check — before auth so Railway can probe it
+// Health check — before auth so GCP Cloud Run can probe it
 app.get('/health', async (c) => {
   await db.execute(sql`SELECT 1`);
   return c.json({ status: 'ok' });
@@ -328,7 +328,7 @@ export function handleWebSocket(ws: WebSocket): void {
 
 - Each WebSocket connection is scoped to a single conversation (via `conversationId` query param)
 - SDK session is resumed if `sdk_session_id` exists on the conversation and the session file is still on disk
-- If the SDK session file is lost (Railway redeploy, scale-to-zero), `query()` with `resume` will throw — the catch block retries without `resume`, starting a fresh session. The conversation's `sdk_session_id` is updated to the new value
+- If the SDK session file is lost (Cloud Run redeploy, scale-to-zero), `query()` with `resume` will throw — the catch block retries without `resume`, starting a fresh session. The conversation's `sdk_session_id` is updated to the new value
 - When SDK session is lost, past messages remain in Postgres for UI display but agent context resets — the user effectively starts fresh from the agent's perspective while retaining visible history
 - SDK handles compaction internally when context approaches limits. Postgres messages are unaffected — they remain the full history for UI display
 - On WebSocket close, the SDK session is NOT destroyed — it persists for future resume

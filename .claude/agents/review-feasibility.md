@@ -20,13 +20,13 @@ You are a feasibility reviewer for the Personal Assistant Agent project. Your so
 - **Google APIs:** googleapis npm package (Gmail, Calendar, Drive)
 - **Frontend:** React + Vite + Tailwind + shadcn/ui
 - **Auth:** Google OAuth → JWT session cookie
-- **Deploy:** Railway (scale-to-zero, managed Postgres)
+- **Deploy:** GCP Cloud Run (scale-to-zero, Cloud SQL)
 
 ## What to Check
 
 - **Schema changes**: Can existing data migrate cleanly? Any constraints that conflict?
 - **Google API limits**: Rate limits, quota, scope requirements for proposed operations
-- **Railway constraints**: Ephemeral filesystem (tokens must be in DB), scale-to-zero (no persistent WebSocket without reconnection)
+- **Cloud Run constraints**: Ephemeral filesystem (tokens must be in DB), scale-to-zero (no persistent WebSocket without reconnection)
 - **Agent SDK limits**: Single session per connection, text-only responses, tool call semantics
 - **Drizzle ORM**: Can the proposed queries be expressed with Drizzle's query builder?
 - **Implementation effort**: Is the task sizing realistic for the proposed scope?
