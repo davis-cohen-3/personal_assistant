@@ -36,16 +36,18 @@ src/
 │   ├── agent.ts           # Agent SDK integration, streaming
 │   ├── tools.ts           # MCP tool definitions (5 tools)
 │   ├── routes.ts          # REST API (thin routing layer)
-│   ├── auth.ts            # Google OAuth, JWT sessions, CSRF
+│   ├── auth.ts            # JWT sessions, CSRF
 │   ├── email.ts           # Inbox sync, search, send/reply
 │   ├── crypto.ts          # AES-256-GCM token encryption
 │   ├── db/
 │   │   ├── schema.ts      # Drizzle ORM table definitions
 │   │   └── queries.ts     # All database operations
 │   └── google/
+│       ├── auth.ts        # Google OAuth, token storage/refresh
 │       ├── gmail.ts       # Gmail API wrapper
 │       ├── calendar.ts    # Calendar API wrapper
-│       └── drive.ts       # Drive API wrapper
+│       ├── drive.ts       # Drive API wrapper
+│       └── index.ts       # Re-exports
 ├── client/
 │   ├── App.tsx            # Layout, tabs (inbox/calendar)
 │   ├── components/
