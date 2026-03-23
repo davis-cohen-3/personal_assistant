@@ -88,16 +88,18 @@ vi.mock("../../src/server/google/calendar.js", () => ({
   deleteEvent: mockCalendarDeleteEvent,
 }));
 
+vi.mock("../../src/server/buckets.js", () => ({
+  createBucket: mockCreateBucket,
+  assignThread: mockAssignThread,
+  applyBucketTemplate: mockApplyBucketTemplate,
+}));
+
 vi.mock("../../src/server/db/queries.js", () => ({
   listBucketsWithThreads: mockListBucketsWithThreads,
-  createBucket: mockCreateBucket,
-  markAllForRebucket: mockMarkAllForRebucket,
   updateBucket: mockUpdateBucket,
   deleteBucket: mockDeleteBucket,
-  assignThread: mockAssignThread,
   listBucketTemplates: mockListBucketTemplates,
   getBucketTemplate: mockGetBucketTemplate,
-  applyBucketTemplate: mockApplyBucketTemplate,
   listConversations: mockListConversations,
   createConversation: mockCreateConversation,
   getConversation: mockGetConversation,
@@ -410,10 +412,9 @@ describe("GET /api/buckets", () => {
 });
 
 describe("POST /api/buckets", () => {
-  it("returns 201, calls createBucket and markAllForRebucket, includes rebucket_required", async () => {
+  it("returns 201, calls createBucket, includes rebucket_required", async () => {
     const bucket = { id: "bucket-new", name: "Work", description: "Work emails" };
     mockCreateBucket.mockResolvedValue(bucket);
-    mockMarkAllForRebucket.mockResolvedValue(undefined);
 
     const res = await app.request("/api/buckets", {
       method: "POST",
@@ -425,7 +426,6 @@ describe("POST /api/buckets", () => {
     expect(body.rebucket_required).toBe(true);
     expect(body.name).toBe("Work");
     expect(mockCreateBucket).toHaveBeenCalledWith(TEST_USER_ID, "Work", "Work emails");
-    expect(mockMarkAllForRebucket).toHaveBeenCalledWith(TEST_USER_ID);
   });
 
   it("returns 400 when name is missing", async () => {

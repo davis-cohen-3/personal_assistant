@@ -70,13 +70,15 @@ const {
   mockDriveGetFileMetadata: vi.fn(),
 }));
 
+vi.mock("../../src/server/buckets.js", () => ({
+  createBucket: mockCreateBucket,
+  assignThreadsBatch: mockAssignThreadsBatch,
+}));
+
 vi.mock("../../src/server/db/queries.js", () => ({
   listBuckets: mockListBuckets,
-  createBucket: mockCreateBucket,
   updateBucket: mockUpdateBucket,
   deleteBucket: mockDeleteBucket,
-  assignThreadsBatch: mockAssignThreadsBatch,
-  markAllForRebucket: mockMarkAllForRebucket,
   countUnbucketedThreads: mockCountUnbucketedThreads,
 }));
 
@@ -138,10 +140,9 @@ describe("buckets tool", () => {
   });
 
   describe("create action", () => {
-    it("calls createBucket and markAllForRebucket, returns rebucket_required: true", async () => {
+    it("calls createBucket, returns rebucket_required: true", async () => {
       const created = { id: "b2", name: "Newsletters", description: "Newsletter emails" };
       mockCreateBucket.mockResolvedValue(created);
-      mockMarkAllForRebucket.mockResolvedValue(undefined);
 
       const result = await handlers.buckets(TEST_USER_ID, {
         action: "create",
@@ -150,7 +151,6 @@ describe("buckets tool", () => {
       });
 
       expect(mockCreateBucket).toHaveBeenCalledWith(TEST_USER_ID, "Newsletters", "Newsletter emails");
-      expect(mockMarkAllForRebucket).toHaveBeenCalledWith(TEST_USER_ID);
 
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.rebucket_required).toBe(true);
